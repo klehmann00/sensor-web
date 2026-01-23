@@ -1,0 +1,109 @@
+// lib/hooks/useSensors.ts
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import SensorProcessor from '../processors/SensorProcessor';
+import EnhancedSensorProcessor from '../processors/EnhancedSensorProcessor';
+
+interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface SensorData {
+  accelerometer: Vector3D;
+  gyroscope: Vector3D;
+  processedAccel: any;
+  processedGyro: any;
+  isActive: boolean;
+}
+
+export const useSensors = () => {
+  const [sensorData, setSensorData] = useState<SensorData>({
+    accelerometer: { x: 0, y: 0, z: 0 },
+    gyroscope: { x: 0, y: 0, z: 0 },
+    processedAccel: null,
+    processedGyro: null,
+    isActive: false
+  });
+  const [permissionGranted, setPermissionGranted] = useState(false);
+
+  const requestPermission = useCallback(async () => {
+    if (typeof window === 'undefined') return false;
+
+    // Check if DeviceMotionEvent exists and has requestPermission
+    if (
+      typeof DeviceMotionEvent !== 'undefined' &&
+      typeof (DeviceMotionEvent as any).requestPermission === 'function'
+    ) {
+      try {
+        const permission = await (DeviceMotionEvent as any).requestPermission();
+        const granted = permission === 'granted';
+        setPermissionGranted(granted);
+        return granted;
+      } catch (error) {
+        console.error('Permission request failed:', error);
+        return false;
+      }
+    } else {
+      // Permission not required (non-iOS or older browser)
+      setPermissionGranted(true);
+      return true;
+    }
+  }, []);
+
+  const startSensors = useCallback(async () => {
+    if (!permissionGranted) {
+      const granted = await requestPermission();
+      if (!granted) return false;
+    }
+
+    const handleMotion = (event: DeviceMotionEvent) => {
+      const accel = event.accelerationIncludingGravity;
+      const gyro = event.rotationRate;
+
+      if (accel) {
+        const accelData = {
+          x: accel.x || 0,
+          y: accel.y || 0,
+          z: accel.z || 0
+        };
+
+        const gyroData = gyro
+          ? { x: gyro.alpha || 0, y: gyro.beta || 0, z: gyro.gamma || 0 }
+          : { x: 0, y: 0, z: 0 };
+
+        const processedAccel = SensorProcessor.processAccelerometerData(accelData);
+        const processedGyro = SensorProcessor.processGyroscopeData(gyroData);
+
+        setSensorData({
+          accelerometer: accelData,
+          gyroscope: gyroData,
+          processedAccel,
+          processedGyro,
+          isActive: true
+        });
+      }
+    };
+
+    window.addEventListener('devicemotion', handleMotion);
+
+    return () => {
+      window.removeEventListener('devicemotion', handleMotion);
+      setSensorData(prev => ({ ...prev, isActive: false }));
+    };
+  }, [permissionGranted, requestPermission]);
+
+  const stopSensors = useCallback(() => {
+    setSensorData(prev => ({ ...prev, isActive: false }));
+  }, []);
+
+  return {
+    ...sensorData,
+    startSensors,
+    stopSensors,
+    requestPermission,
+    permissionGranted
+  };
+};

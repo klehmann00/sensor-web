@@ -1,12 +1,12 @@
-// app/page.tsx
+// app/signup/page.tsx
 'use client';
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import LoginForm from '@/components/auth/LoginForm';
+import SignUpForm from '@/components/auth/SignUpForm';
 import { useAuth } from '@/lib/hooks/useAuth';
 
-export default function Home() {
+export default function SignUpPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
@@ -27,11 +27,11 @@ export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="mb-8 text-center">
-        <h1 className="text-5xl font-bold text-gray-800 mb-2">Sensor Dashboard</h1>
-        <p className="text-gray-600">Track and analyze device sensor data</p>
+        <h1 className="text-5xl font-bold text-gray-800 mb-2">Create Account</h1>
+        <p className="text-gray-600">Join the sensor tracking platform</p>
       </div>
 
-      <LoginForm />
+      <SignUpForm />
     </main>
   );
 }
