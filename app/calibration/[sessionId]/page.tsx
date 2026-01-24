@@ -584,10 +584,13 @@ export default function CalibrationAnalysisPage() {
     StorageManager.initialize(database);
   }, []);
 
-  // Load signal controls from localStorage on mount
+  // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
+    const STORAGE_VERSION = 2; // Increment this when labels/structure changes
     const savedControls = localStorage.getItem('masterSignalViewerControls');
-    if (savedControls) {
+    const savedVersion = localStorage.getItem('masterSignalViewerVersion');
+    
+    if (savedControls && parseInt(savedVersion || '0') === STORAGE_VERSION) {
       try {
         const parsed = JSON.parse(savedControls);
         setSignalControls(prev => ({
@@ -596,10 +599,14 @@ export default function CalibrationAnalysisPage() {
         }));
       } catch (e) {
         console.error('Failed to load saved signal controls:', e);
+        localStorage.removeItem('masterSignalViewerControls'); // Clear corrupted data
       }
+    } else {
+      // Version mismatch or no version - clear old data and use defaults
+      localStorage.removeItem('masterSignalViewerControls');
+      localStorage.setItem('masterSignalViewerVersion', STORAGE_VERSION.toString());
     }
   }, []);
-
   // Save signal controls to localStorage when they change
   useEffect(() => {
     localStorage.setItem('masterSignalViewerControls', JSON.stringify(signalControls));
