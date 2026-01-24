@@ -9,6 +9,30 @@ import StorageManager from '@/lib/managers/StorageManager';
 import { database } from '@/lib/firebase';
 import AccelerometerChart from '@/components/sensors/AccelerometerChart';
 import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import annotationPlugin from 'chartjs-plugin-annotation';
+
+// Register Chart.js components and annotation plugin
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  annotationPlugin
+);
+
 
 interface Vector3D {
   x: number;
@@ -1654,6 +1678,32 @@ export default function CalibrationAnalysisPage() {
     }));
   };
 
+  // Custom plugin to draw signal labels at the end of each line
+  const lineLabelsPlugin = {
+    id: 'lineLabels',
+    afterDatasetsDraw(chart: any) {
+      const { ctx, chartArea: { right } } = chart;
+      
+      chart.data.datasets.forEach((dataset: any, i: number) => {
+        const meta = chart.getDatasetMeta(i);
+        if (!meta.visible || !dataset.data || dataset.data.length === 0) return;
+        
+        // Get the actual rendered position of the last point (includes offset!)
+        const lastIndex = dataset.data.length - 1;
+        const point = meta.data[lastIndex];
+        if (!point) return;
+        
+        ctx.save();
+        ctx.fillStyle = dataset.borderColor;
+        ctx.font = 'bold 11px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(dataset.label || '', right + 5, point.y + 4);
+        ctx.restore();
+      });
+    }
+  };
+
+
   // Create reference frame visualization chart data
   const referenceFrameChartData = useMemo(() => {
     if (!calibrationResult) return null;
@@ -2346,6 +2396,7 @@ export default function CalibrationAnalysisPage() {
                 >
                   <Line
                     data={masterSignalViewerData}
+                    plugins={[lineLabelsPlugin]}
                     options={{
                       responsive: true,
                       maintainAspectRatio: false,
