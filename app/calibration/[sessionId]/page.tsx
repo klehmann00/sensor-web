@@ -1682,27 +1682,29 @@ export default function CalibrationAnalysisPage() {
   const lineLabelsPlugin = {
     id: 'lineLabels',
     afterDatasetsDraw(chart: any) {
-      const { ctx, chartArea: { right } } = chart;
+      const { ctx, tooltip } = chart;
       
-      chart.data.datasets.forEach((dataset: any, i: number) => {
-        const meta = chart.getDatasetMeta(i);
-        if (!meta.visible || !dataset.data || dataset.data.length === 0) return;
+      // Only draw labels if tooltip is active (user is hovering)
+      if (!tooltip || !tooltip._active || tooltip._active.length === 0) return;
+      
+      // Draw label for each active point at the hover position
+      tooltip._active.forEach((activePoint: any) => {
+        const dataset = chart.data.datasets[activePoint.datasetIndex];
+        const meta = chart.getDatasetMeta(activePoint.datasetIndex);
+        if (!meta.visible) return;
         
-        // Get the actual rendered position of the last point (includes offset!)
-        const lastIndex = dataset.data.length - 1;
-        const point = meta.data[lastIndex];
-        if (!point) return;
+        const point = meta.data[activePoint.index];
         
         ctx.save();
         ctx.fillStyle = dataset.borderColor;
-        ctx.font = 'bold 11px Arial';
+        ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'left';
-        ctx.fillText(dataset.label || '', right + 5, point.y + 4);
+        // Position label to the right of the point
+        ctx.fillText(dataset.label || '', point.x + 10, point.y);
         ctx.restore();
       });
     }
   };
-
 
   // Create reference frame visualization chart data
   const referenceFrameChartData = useMemo(() => {
