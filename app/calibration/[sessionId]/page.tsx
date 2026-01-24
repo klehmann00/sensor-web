@@ -543,7 +543,7 @@ export default function CalibrationAnalysisPage() {
 
     // === LATERAL ACCEL TRIFECTA ===
     accelY_real: { visible: true, offset: 0, color: '#ef4444', width: 3, label: 'accelLinearY_measured' },
-    accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: '○ Accel Y (gyro)' },
+    accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'accelLinearY_fromGyro' },
     accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: '○ Accel Y (mag)' },
 
     // === ROTATION RATE TRIFECTA ===
