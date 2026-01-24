@@ -106,6 +106,13 @@ interface CalibrationResult {
   heading_measured: number[];
   heading_fromAccel: number[];
   heading_fromGyro: number[];
+  // Filtered raw signals (using alpha)
+  accelFilteredX: number[];
+  accelFilteredY: number[];
+  accelFilteredZ: number[];
+  gyroFilteredX: number[];
+  gyroFilteredY: number[];
+  gyroFilteredZ: number[];
 }
 
 /**
@@ -154,7 +161,8 @@ function applyFloatingCalibration(
   gyroData: Vector3D[],
   gpsData: GPSData[],
   alpha: number = 0.95,
-  observerAlpha: number = 0.05
+  observerAlpha: number = 0.05,
+  filterAlpha: number = 0.05
 ): CalibrationResult {
   const result: CalibrationResult = {
     transformed: [],
@@ -176,9 +184,17 @@ function applyFloatingCalibration(
     gyroZ_fromMag: [],
     heading_measured: [],
     heading_fromAccel: [],
-    heading_fromGyro: []
+    heading_fromGyro: [],
+    // Filtered raw signals (using alpha parameter)
+    accelFilteredX: [],
+    accelFilteredY: [],
+    accelFilteredZ: [],
+    gyroFilteredX: [],
+    gyroFilteredY: [],
+    gyroFilteredZ: []
   };
 
+  // State variables
   // State variables
   let gravity = { x: 0, y: 0, z: 0 };
   let forward = { x: 0, y: 0, z: 0 };
@@ -191,7 +207,13 @@ function applyFloatingCalibration(
   let integratedHeading_gyro = 0;
   let prevMagHeading = 0;
 
-  // === FILTERED SIGNALS FOR OBSERVERS (noise reduction) ===
+  // === FILTERED RAW ACCEL (for gravity estimation using alpha) ===
+  let accelFilteredX = 0, accelFilteredY = 0, accelFilteredZ = 0;
+
+  // === FILTERED RAW GYRO (for future calculations using filterAlpha) ===
+  let gyroFilteredX = 0, gyroFilteredY = 0, gyroFilteredZ = 0;
+
+  // === FILTERED SIGNALS FOR OBSERVERS (noise reduction with observerAlpha) ===
   // Filter LINEAR acceleration (after gravity removal), not raw accel
   let filteredLinearAccelX = 0, filteredLinearAccelY = 0, filteredLinearAccelZ = 0;
   let filteredGyroX = 0, filteredGyroY = 0, filteredGyroZ = 0;
@@ -209,10 +231,30 @@ function applyFloatingCalibration(
     const gyro = gyroData[i] || { x: 0, y: 0, z: 0 };
     const gps = interpolatedGPS[i];
 
-    // === STEP 1: GRAVITY TRACKING (uses raw data) ===
-    gravity.x = alpha * gravity.x + (1 - alpha) * accel.x;
-    gravity.y = alpha * gravity.y + (1 - alpha) * accel.y;
-    gravity.z = alpha * gravity.z + (1 - alpha) * accel.z;
+    // === STEP 0: FILTER RAW ACCEL (for clean gravity estimation using alpha) ===
+    accelFilteredX = alpha * accelFilteredX + (1 - alpha) * accel.x;
+    accelFilteredY = alpha * accelFilteredY + (1 - alpha) * accel.y;
+    accelFilteredZ = alpha * accelFilteredZ + (1 - alpha) * accel.z;
+
+    // Store filtered accel for export
+    result.accelFilteredX.push(accelFilteredX);
+    result.accelFilteredY.push(accelFilteredY);
+    result.accelFilteredZ.push(accelFilteredZ);
+
+    // === FILTER RAW GYRO (for future calculations using filterAlpha) ===
+    gyroFilteredX = filterAlpha * gyro.x + (1 - filterAlpha) * gyroFilteredX;
+    gyroFilteredY = filterAlpha * gyro.y + (1 - filterAlpha) * gyroFilteredY;
+    gyroFilteredZ = filterAlpha * gyro.z + (1 - filterAlpha) * gyroFilteredZ;
+
+    // Store filtered gyro for export
+    result.gyroFilteredX.push(gyroFilteredX);
+    result.gyroFilteredY.push(gyroFilteredY);
+    result.gyroFilteredZ.push(gyroFilteredZ);
+
+    // === STEP 1: GRAVITY TRACKING (uses accelFiltered data) ===
+    gravity.x = alpha * gravity.x + (1 - alpha) * accelFilteredX;
+    gravity.y = alpha * gravity.y + (1 - alpha) * accelFilteredY;
+    gravity.z = alpha * gravity.z + (1 - alpha) * accelFilteredZ;
 
     // === STEP 2: REMOVE GRAVITY FIRST (from raw data) ===
     const linearAccel = {
@@ -716,9 +758,10 @@ export default function CalibrationAnalysisPage() {
       session.gyroscopeData,
       session.gpsData || [],
       alpha,
-      observerAlpha
+      observerAlpha,
+      filterAlpha
     );
-  }, [session, alpha, observerAlpha]);
+  }, [session, alpha, observerAlpha, filterAlpha]);
 
   // Data slicing logic
   const getSlicedData = (data: Vector3D[]) => {
@@ -1397,14 +1440,14 @@ export default function CalibrationAnalysisPage() {
       sampleUnwrapped: unwrappedMagX.slice(0, 10)
     });
 
-    // Apply filtering using state variable filterAlpha
-    const filteredAccelX = applyEMAFilter(rawAccelX, filterAlpha);
-    const filteredAccelY = applyEMAFilter(rawAccelY, filterAlpha);
-    const filteredAccelZ = applyEMAFilter(rawAccelZ, filterAlpha);
+    // Use filtered signals from calibration result (already filtered in calibration loop)
+    const filteredAccelX = calibrationResult.accelFilteredX;
+    const filteredAccelY = calibrationResult.accelFilteredY;
+    const filteredAccelZ = calibrationResult.accelFilteredZ;
 
-    const filteredGyroX = applyEMAFilter(rawGyroX, filterAlpha);
-    const filteredGyroY = applyEMAFilter(rawGyroY, filterAlpha);
-    const filteredGyroZ = applyEMAFilter(rawGyroZ, filterAlpha);
+    const filteredGyroX = calibrationResult.gyroFilteredX;
+    const filteredGyroY = calibrationResult.gyroFilteredY;
+    const filteredGyroZ = calibrationResult.gyroFilteredZ;
 
     // Slice data based on scroll position
     const sliceData = (arr: number[]) => {
