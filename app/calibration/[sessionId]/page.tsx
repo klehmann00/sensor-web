@@ -544,17 +544,17 @@ export default function CalibrationAnalysisPage() {
     // === LATERAL ACCEL TRIFECTA ===
     accelY_real: { visible: true, offset: 0, color: '#ef4444', width: 3, label: 'accelLinearY_measured' },
     accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'accelLinearY_fromGyro' },
-    accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: '○ Accel Y (mag)' },
+    accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: 'accelLinearY_fromMag' },
 
     // === ROTATION RATE TRIFECTA ===
-    gyroZ_real: { visible: false, offset: 0, color: '#3b82f6', width: 3, label: '✓ Gyro Z (real)' },
-    gyroZ_accel: { visible: false, offset: 0, color: '#06b6d4', width: 2, label: '○ Gyro Z (accel)' },
-    gyroZ_mag: { visible: false, offset: 0, color: '#0891b2', width: 2, label: '○ Gyro Z (mag)' },
+    gyroZ_real: { visible: false, offset: 0, color: '#3b82f6', width: 3, label: 'gyroZ_measured' },
+    gyroZ_accel: { visible: false, offset: 0, color: '#06b6d4', width: 2, label: 'gyroZ_fromAccel' },
+    gyroZ_mag: { visible: false, offset: 0, color: '#0891b2', width: 2, label: 'gyroZ_fromMag' },
 
     // === HEADING TRIFECTA ===
-    heading_real: { visible: false, offset: 0, color: '#8b5cf6', width: 3, label: '✓ Heading (real)' },
-    heading_accel: { visible: false, offset: 0, color: '#a855f7', width: 2, label: '○ Heading (accel)' },
-    heading_gyro: { visible: false, offset: 0, color: '#c084fc', width: 2, label: '○ Heading (gyro)' },
+    heading_real: { visible: false, offset: 0, color: '#8b5cf6', width: 3, label: 'heading_measured' },
+    heading_accel: { visible: false, offset: 0, color: '#a855f7', width: 2, label: 'heading_fromAccel' },
+    heading_gyro: { visible: false, offset: 0, color: '#c084fc', width: 2, label: 'heading_fromGyro' },
 
     // Transformed (primes) - MAIN SIGNALS (OUTPUT)
     xPrime: { visible: true, offset: 0, color: '#dc2626', width: 3 },
