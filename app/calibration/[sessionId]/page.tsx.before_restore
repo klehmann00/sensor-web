@@ -9,6 +9,29 @@ import StorageManager from '@/lib/managers/StorageManager';
 import { database } from '@/lib/firebase';
 import AccelerometerChart from '@/components/sensors/AccelerometerChart';
 import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 interface Vector3D {
   x: number;
@@ -61,6 +84,22 @@ function exponentialMovingAverage(data: number[], alpha: number): number[] {
   return result;
 }
 
+// === TRANSFORMATION LEARNING INTERFACES ===
+interface TransformationLearningState {
+  state: 'idle' | 'learning' | 'locked';
+  startIndex: number;
+  endIndex: number;
+}
+
+interface TransformationResult {
+  forwardAxis: 'x' | 'y' | 'z' | null;
+  forwardAxisSign: 1 | -1;
+  confidence: number;
+  samplesUsed: number;
+  correlationScores: { x: number; y: number; z: number };
+  states: TransformationLearningState[];
+}
+
 interface CalibrationResult {
   transformed: Vector3D[];
   gravityHistory: Vector3D[];
@@ -73,15 +112,18 @@ interface CalibrationResult {
   virtualLateralAccel: number[];
   actualSampleRate: number;
   // Cross-verification trifecta
-  accelY_measured: number[];
-  accelY_fromGyro: number[];
-  accelY_fromMag: number[];
-  gyroZ_measured: number[];
-  gyroZ_fromAccel: number[];
-  gyroZ_fromMag: number[];
-  heading_measured: number[];
-  heading_fromAccel: number[];
-  heading_fromGyro: number[];
+  accelLinearXFiltered: number[];
+  accelLinearYFiltered: number[];
+  accelLinearZFiltered: number[];
+  observerAccelLinearY_fromGyro: number[];
+  observerAccelLinearY_fromMag: number[];
+  gyroFilteredZ_observed: number[];
+  observerGyroZ_fromAccel: number[];
+  observerGyroZ_fromMag: number[];
+  heading_observed: number[];
+  observerHeading_fromAccel: number[];
+  observerHeading_fromGyro: number[];
+  transformationResult: TransformationResult | null;
 }
 
 /**
@@ -144,15 +186,18 @@ function applyFloatingCalibration(
     virtualLateralAccel: [],
     actualSampleRate: 60,
     // Cross-verification trifecta
-    accelY_measured: [],
-    accelY_fromGyro: [],
-    accelY_fromMag: [],
-    gyroZ_measured: [],
-    gyroZ_fromAccel: [],
-    gyroZ_fromMag: [],
-    heading_measured: [],
-    heading_fromAccel: [],
-    heading_fromGyro: []
+    accelLinearXFiltered: [],
+    accelLinearYFiltered: [],
+    accelLinearZFiltered: [],
+    observerAccelLinearY_fromGyro: [],
+    observerAccelLinearY_fromMag: [],
+    gyroFilteredZ_observed: [],
+    observerGyroZ_fromAccel: [],
+    observerGyroZ_fromMag: [],
+    heading_observed: [],
+    observerHeading_fromAccel: [],
+    observerHeading_fromGyro: [],
+    transformationResult: null
   };
 
   // State variables
@@ -197,6 +242,14 @@ function applyFloatingCalibration(
       z: accel.z - gravity.z
     };
 
+    if (i === 2800) {
+      console.log('Sample 2800:',
+        'Raw[', accel.x.toFixed(2), accel.y.toFixed(2), accel.z.toFixed(2), ']',
+        'Grav[', gravity.x.toFixed(2), gravity.y.toFixed(2), gravity.z.toFixed(2), ']',
+        'Linear[', linearAccel.x.toFixed(2), linearAccel.y.toFixed(2), linearAccel.z.toFixed(2), ']'
+      );
+    }
+
     // === STEP 3: FILTER THE LINEAR ACCELERATION (gravity already removed) ===
     // This is the KEY FIX: filter the linear accel, not the raw accel!
     filteredLinearAccelX = observerAlpha * linearAccel.x + (1 - observerAlpha) * filteredLinearAccelX;
@@ -240,118 +293,116 @@ function applyFloatingCalibration(
     prevMagHeading = filteredMagHeading;
 
     // === DIAGNOSTIC LOGGING: VERIFY FILTERED VALUES ===
+    // COMMENTED OUT TO REDUCE CONSOLE SPAM - Uncomment for debugging
 
-    // VERIFICATION: Make sure we're using filtered variables (check once at sample 100)
-    if (i === 100) {
-      console.log('\n🔍 VARIABLE CHECK - Are we using filtered values?');
-      console.log('Variables in scope:', {
-        hasFilteredLinearAccelY: typeof filteredLinearAccelY !== 'undefined',
-        hasFilteredGyroZ: typeof filteredGyroZ !== 'undefined',
-        hasFilteredLinearAccel: typeof filteredLinearAccel !== 'undefined',
-        hasRawGyroZ: typeof gyro.z !== 'undefined'
-      });
+    // if (i === 100) {
+    //   console.log('\n🔍 VARIABLE CHECK - Are we using filtered values?');
+    //   console.log('Variables in scope:', {
+    //     hasFilteredLinearAccelY: typeof filteredLinearAccelY !== 'undefined',
+    //     hasFilteredGyroZ: typeof filteredGyroZ !== 'undefined',
+    //     hasFilteredLinearAccel: typeof filteredLinearAccel !== 'undefined',
+    //     hasRawGyroZ: typeof gyro.z !== 'undefined'
+    //   });
+    //   console.log('Values check:', {
+    //     'gyro.z (RAW)': gyro.z.toFixed(4),
+    //     'filteredGyroZ (FILTERED)': filteredGyroZ.toFixed(4),
+    //     'Difference': (gyro.z - filteredGyroZ).toFixed(4),
+    //     'Same?': Math.abs(gyro.z - filteredGyroZ) < 0.0001 ? '❌ NOT FILTERING!' : '✓ Different (filtering working)'
+    //   });
+    //   console.log('Linear accel check (FIXED: now filtering linear, not raw):', {
+    //     'accel.y (RAW with gravity)': accel.y.toFixed(3),
+    //     'gravity.y': gravity.y.toFixed(3),
+    //     'linearAccel.y (RAW - gravity)': linearAccel.y.toFixed(3),
+    //     'filteredLinearAccel.y (FILTERED linear)': filteredLinearAccel.y.toFixed(3),
+    //     'Difference': (linearAccel.y - filteredLinearAccel.y).toFixed(3),
+    //     'Same?': Math.abs(linearAccel.y - filteredLinearAccel.y) < 0.001 ? '❌ NOT FILTERING!' : '✓ Different (filtering working)'
+    //   });
+    // }
 
-      console.log('Values check:', {
-        'gyro.z (RAW)': gyro.z.toFixed(4),
-        'filteredGyroZ (FILTERED)': filteredGyroZ.toFixed(4),
-        'Difference': (gyro.z - filteredGyroZ).toFixed(4),
-        'Same?': Math.abs(gyro.z - filteredGyroZ) < 0.0001 ? '❌ NOT FILTERING!' : '✓ Different (filtering working)'
-      });
+    // Periodic logging - COMMENTED OUT TO REDUCE CONSOLE SPAM
+    // if (i % 500 === 0 || (i >= 2800 && i <= 2900 && i % 50 === 0)) {
+    //   console.log(`\n=== SAMPLE ${i} (${i >= 2800 && i <= 2900 ? 'TURN SECTION' : 'normal'}) ===`);
+    //   console.log('RAW sensors:', {
+    //     accelX: accel.x.toFixed(3),
+    //     accelY: accel.y.toFixed(3),
+    //     accelZ: accel.z.toFixed(3),
+    //     gyroZ: gyro.z.toFixed(4)
+    //   });
+    //   console.log('After gravity removal:', {
+    //     'gravity.y': gravity.y.toFixed(3),
+    //     'linearAccel.y (RAW - gravity)': linearAccel.y.toFixed(3),
+    //     'filteredLinearAccel.y (FILTERED linear)': filteredLinearAccel.y.toFixed(3),
+    //     'observerAlpha': observerAlpha.toFixed(3)
+    //   });
+    //   console.log('Gyro (filtered):', {
+    //     'gyro.z (RAW)': gyro.z.toFixed(4),
+    //     'filteredGyroZ': filteredGyroZ.toFixed(4),
+    //     'observerAlpha': observerAlpha.toFixed(3)
+    //   });
+    //   console.log('GPS & calculations:', {
+    //     speed_mps: currentSpeed.toFixed(2),
+    //     speed_mph: (currentSpeed * 2.237).toFixed(2)
+    //   });
+    //   console.log('Observer calculations (ABOUT TO COMPUTE):');
+    //   console.log('  accelLinearYFiltered = filteredLinearAccel.y =', filteredLinearAccel.y.toFixed(3), '✓ (now filtering linear, not raw!)');
+    //   console.log('  observerAccelLinearY_fromGyro = speed * filteredGyroZ =', currentSpeed.toFixed(2), '*', filteredGyroZ.toFixed(4), '=', (currentSpeed * filteredGyroZ).toFixed(3));
+    //   console.log('  observerAccelLinearY_fromMag = speed * magHeadingRate =', currentSpeed.toFixed(2), '*', magHeadingRate.toFixed(4), '=', (currentSpeed * magHeadingRate).toFixed(3));
+    //   console.log('');
+    //   console.log('  gyroFilteredZ_observed = filteredGyroZ =', filteredGyroZ.toFixed(4), '✓');
+    //   console.log('  observerGyroZ_fromAccel = filteredLinearAccel.y / speed =', filteredLinearAccel.y.toFixed(3), '/', currentSpeed.toFixed(2), '=',
+    //     currentSpeed > 1 ? (filteredLinearAccel.y / currentSpeed).toFixed(4) : '0.0000 (speed too low)');
+    //   console.log('  observerGyroZ_fromMag = magHeadingRate =', magHeadingRate.toFixed(4), '(from filtered mag heading change)');
+    // }
 
-      console.log('Linear accel check (FIXED: now filtering linear, not raw):', {
-        'accel.y (RAW with gravity)': accel.y.toFixed(3),
-        'gravity.y': gravity.y.toFixed(3),
-        'linearAccel.y (RAW - gravity)': linearAccel.y.toFixed(3),
-        'filteredLinearAccel.y (FILTERED linear)': filteredLinearAccel.y.toFixed(3),
-        'Difference': (linearAccel.y - filteredLinearAccel.y).toFixed(3),
-        'Same?': Math.abs(linearAccel.y - filteredLinearAccel.y) < 0.001 ? '❌ NOT FILTERING!' : '✓ Different (filtering working)'
-      });
-    }
+    // === STORE ALL LINEAR ACCEL AXES (for transformation learning) ===
+    const accelLinearXFiltered = filteredLinearAccel.x;
+    const accelLinearYFiltered = filteredLinearAccel.y;
+    const accelLinearZFiltered = filteredLinearAccel.z;
 
-    // Periodic logging to show what's going into observer calculations
-    if (i % 500 === 0 || (i >= 2800 && i <= 2900 && i % 50 === 0)) {
-      console.log(`\n=== SAMPLE ${i} (${i >= 2800 && i <= 2900 ? 'TURN SECTION' : 'normal'}) ===`);
+    result.accelLinearXFiltered.push(accelLinearXFiltered);
+    result.accelLinearYFiltered.push(accelLinearYFiltered);
+    result.accelLinearZFiltered.push(accelLinearZFiltered);
 
-      // Show what we're working with
-      console.log('RAW sensors:', {
-        accelX: accel.x.toFixed(3),
-        accelY: accel.y.toFixed(3),
-        accelZ: accel.z.toFixed(3),
-        gyroZ: gyro.z.toFixed(4)
-      });
+    // === LATERAL ACCELERATION TRIFECTA (observers use RAW data) ===
+    // 2. Predicted from RAW gyroscope (centripetal acceleration: a = v*ω)
+    const observerAccelLinearY_fromGyro = currentSpeed * gyro.z;
 
-      console.log('After gravity removal:', {
-        'gravity.y': gravity.y.toFixed(3),
-        'linearAccel.y (RAW - gravity)': linearAccel.y.toFixed(3),
-        'filteredLinearAccel.y (FILTERED linear)': filteredLinearAccel.y.toFixed(3),
-        'observerAlpha': observerAlpha.toFixed(3)
-      });
+    // 3. Predicted from RAW magnetometer (heading change → rotation rate → centripetal accel)
+    // Calculate raw heading rate from unfiltered magnetometer (rawMagHeading already calculated at line 280)
+    const rawMagHeadingRate = i > 0 ? (rawMagHeading - (result.heading_observed[i-1] || rawMagHeading)) / deltaTime : 0;
+    const observerAccelLinearY_fromMag = currentSpeed * rawMagHeadingRate;
+    result.observerAccelLinearY_fromGyro.push(observerAccelLinearY_fromGyro);
+    result.observerAccelLinearY_fromMag.push(observerAccelLinearY_fromMag);
 
-      console.log('Gyro (filtered):', {
-        'gyro.z (RAW)': gyro.z.toFixed(4),
-        'filteredGyroZ': filteredGyroZ.toFixed(4),
-        'observerAlpha': observerAlpha.toFixed(3)
-      });
+    // === ROTATION RATE TRIFECTA (observers use RAW or FILTERED data) ===
+    // 1. Measured from FILTERED gyroscope (this is the "real" signal we're comparing against)
+    const gyroFilteredZ_observed = filteredGyroZ;
 
-      console.log('GPS & calculations:', {
-        speed_mps: currentSpeed.toFixed(2),
-        speed_mph: (currentSpeed * 2.237).toFixed(2)
-      });
+    // 2. Predicted from RAW accelerometer (ω = a/v, from centripetal acceleration)
+    const observerGyroZ_fromAccel = currentSpeed > 1 ? (linearAccel.y / currentSpeed) : 0;
 
-      console.log('Observer calculations (ABOUT TO COMPUTE):');
-      console.log('  accelY_measured = filteredLinearAccel.y =', filteredLinearAccel.y.toFixed(3), '✓ (now filtering linear, not raw!)');
-      console.log('  accelY_fromGyro = speed * filteredGyroZ =', currentSpeed.toFixed(2), '*', filteredGyroZ.toFixed(4), '=', (currentSpeed * filteredGyroZ).toFixed(3));
-      console.log('  accelY_fromMag = speed * magHeadingRate =', currentSpeed.toFixed(2), '*', magHeadingRate.toFixed(4), '=', (currentSpeed * magHeadingRate).toFixed(3));
-      console.log('');
-      console.log('  gyroZ_measured = filteredGyroZ =', filteredGyroZ.toFixed(4), '✓');
-      console.log('  gyroZ_fromAccel = filteredLinearAccel.y / speed =', filteredLinearAccel.y.toFixed(3), '/', currentSpeed.toFixed(2), '=',
-        currentSpeed > 1 ? (filteredLinearAccel.y / currentSpeed).toFixed(4) : '0.0000 (speed too low)');
-      console.log('  gyroZ_fromMag = magHeadingRate =', magHeadingRate.toFixed(4), '(from filtered mag heading change)');
-    }
+    // 3. Predicted from RAW magnetometer (heading change rate)
+    const observerGyroZ_fromMag = rawMagHeadingRate;
 
-    // === LATERAL ACCELERATION TRIFECTA (using FILTERED signals) ===
-    // 1. Measured from FILTERED accelerometer (after removing gravity)
-    const accelY_measured = filteredLinearAccel.y;
-
-    // 2. Predicted from FILTERED gyroscope (centripetal acceleration: a = v*ω)
-    const accelY_fromGyro = currentSpeed * filteredGyroZ;
-
-    // 3. Predicted from FILTERED magnetometer (heading change → rotation rate → centripetal accel)
-    const accelY_fromMag = currentSpeed * magHeadingRate;
-
-    result.accelY_measured.push(accelY_measured);
-    result.accelY_fromGyro.push(accelY_fromGyro);
-    result.accelY_fromMag.push(accelY_fromMag);
-
-    // === ROTATION RATE TRIFECTA (using FILTERED signals) ===
-    // 1. Measured from FILTERED gyroscope
-    const gyroZ_measured = filteredGyroZ;
-
-    // 2. Predicted from FILTERED accelerometer (ω = a/v, from centripetal acceleration)
-    const gyroZ_fromAccel = currentSpeed > 1 ? (filteredLinearAccel.y / currentSpeed) : 0;
-
-    // 3. Predicted from FILTERED magnetometer (heading change rate)
-    const gyroZ_fromMag = magHeadingRate;
-
-    result.gyroZ_measured.push(gyroZ_measured);
-    result.gyroZ_fromAccel.push(gyroZ_fromAccel);
-    result.gyroZ_fromMag.push(gyroZ_fromMag);
+    result.gyroFilteredZ_observed.push(gyroFilteredZ_observed);
+    result.observerGyroZ_fromAccel.push(observerGyroZ_fromAccel);
+    result.observerGyroZ_fromMag.push(observerGyroZ_fromMag);
 
     // === HEADING TRIFECTA (integrated from FILTERED rates) ===
     // 1. Measured from FILTERED magnetometer
-    const heading_measured = filteredMagHeading;
+    const heading_observed = filteredMagHeading;
 
-    // 2. Predicted from accelerometer (integrate FILTERED gyroZ_fromAccel)
-    integratedHeading_accel += gyroZ_fromAccel * deltaTime;
-    const heading_fromAccel = integratedHeading_accel;
+    // 2. Predicted from accelerometer (integrate FILTERED observerGyroZ_fromAccel)
+    integratedHeading_accel += observerGyroZ_fromAccel * deltaTime;
+    const observerHeading_fromAccel = integratedHeading_accel;
 
     // 3. Predicted from gyroscope (integrate FILTERED gyroZ)
     integratedHeading_gyro += filteredGyroZ * deltaTime;
-    const heading_fromGyro = integratedHeading_gyro;
+    const observerHeading_fromGyro = integratedHeading_gyro;
 
-    result.heading_measured.push(heading_measured * 180 / Math.PI); // Convert to degrees
-    result.heading_fromAccel.push(heading_fromAccel * 180 / Math.PI);
-    result.heading_fromGyro.push(heading_fromGyro * 180 / Math.PI);
+    result.heading_observed.push(heading_observed * 180 / Math.PI); // Convert to degrees
+    result.observerHeading_fromAccel.push(observerHeading_fromAccel * 180 / Math.PI);
+    result.observerHeading_fromGyro.push(observerHeading_fromGyro * 180 / Math.PI);
 
     // === STEP 4: FORWARD DIRECTION LEARNING (Simplified) ===
     // Use GPS-based acceleration for forward learning
@@ -466,27 +517,217 @@ function applyFloatingCalibration(
   }
 
   // === OBSERVER DATA CHECK ===
-  console.log('=== OBSERVER DATA CHECK ===');
-  console.log('Observer arrays created:', {
-    accelY_measured: result.accelY_measured?.length || 0,
-    accelY_fromGyro: result.accelY_fromGyro?.length || 0,
-    accelY_fromMag: result.accelY_fromMag?.length || 0,
-    gyroZ_measured: result.gyroZ_measured?.length || 0,
-    gyroZ_fromAccel: result.gyroZ_fromAccel?.length || 0,
-    gyroZ_fromMag: result.gyroZ_fromMag?.length || 0,
-    heading_measured: result.heading_measured?.length || 0,
-    heading_fromAccel: result.heading_fromAccel?.length || 0,
-    heading_fromGyro: result.heading_fromGyro?.length || 0
-  });
+  // COMMENTED OUT TO REDUCE CONSOLE SPAM
+  // console.log('=== OBSERVER DATA CHECK ===');
+  // console.log('Observer arrays created:', {
+  //   accelLinearYFiltered: result.accelLinearYFiltered?.length || 0,
+  //   observerAccelLinearY_fromGyro: result.observerAccelLinearY_fromGyro?.length || 0,
+  //   observerAccelLinearY_fromMag: result.observerAccelLinearY_fromMag?.length || 0,
+  //   gyroFilteredZ_observed: result.gyroFilteredZ_observed?.length || 0,
+  //   observerGyroZ_fromAccel: result.observerGyroZ_fromAccel?.length || 0,
+  //   observerGyroZ_fromMag: result.observerGyroZ_fromMag?.length || 0,
+  //   heading_observed: result.heading_observed?.length || 0,
+  //   observerHeading_fromAccel: result.observerHeading_fromAccel?.length || 0,
+  //   observerHeading_fromGyro: result.observerHeading_fromGyro?.length || 0
+  // });
 
   // Sample values from turn section
-  if (result.accelY_measured && result.accelY_measured.length > 2800) {
-    console.log('Turn section (2800-2810) values:');
-    console.log('  accelY_real:', result.accelY_measured.slice(2800, 2810).map(v => v.toFixed(2)));
-    console.log('  accelY_gyro:', result.accelY_fromGyro.slice(2800, 2810).map(v => v.toFixed(2)));
-    console.log('  accelY_mag:', result.accelY_fromMag.slice(2800, 2810).map(v => v.toFixed(2)));
+  // if (result.accelLinearYFiltered && result.accelLinearYFiltered.length > 2800) {
+  //   console.log('Turn section (2800-2810) values:');
+  //   console.log('  accelY_real:', result.accelLinearYFiltered.slice(2800, 2810).map(v => v.toFixed(2)));
+  //   console.log('  accelY_gyro:', result.observerAccelLinearY_fromGyro.slice(2800, 2810).map(v => v.toFixed(2)));
+  //   console.log('  accelY_mag:', result.observerAccelLinearY_fromMag.slice(2800, 2810).map(v => v.toFixed(2)));
+  // }
+
+  // === CHECKPOINT: Just before transformation learning ===
+  console.log("=== TRANSFORMATION LEARNING DEBUG: REACHED LINE 500 ===");
+  console.log("DEBUG: If you see this message, the function execution reached this point!");
+
+  // === RUN TRANSFORMATION LEARNING ===
+  console.log(">>> ABOUT TO RUN TRANSFORMATION LEARNING");
+  console.log('>>> Transformation input check:', {
+    hasX: !!result.accelLinearXFiltered,
+    hasY: !!result.accelLinearYFiltered,
+    hasZ: !!result.accelLinearZFiltered,
+    hasGPS: !!result.virtualForwardAccel,
+    lengthX: result.accelLinearXFiltered?.length || 0,
+    lengthY: result.accelLinearYFiltered?.length || 0,
+    lengthZ: result.accelLinearZFiltered?.length || 0,
+    lengthGPS: result.virtualForwardAccel?.length || 0
+  });
+  result.transformationResult = learnTransformation(
+    result.accelLinearXFiltered,
+    result.accelLinearYFiltered,
+    result.accelLinearZFiltered,
+    result.virtualForwardAccel,
+    0.2,  // Lower threshold: 0.2 m/s² (was 0.5)
+    5     // Lower min duration: 5 samples (was 10)
+  );
+  console.log(">>> TRANSFORMATION COMPLETE:", result.transformationResult);
+
+  return result;
+}
+
+
+// === TRANSFORMATION LEARNING FUNCTION ===
+function learnTransformation(
+  accelLinearX: number[],
+  accelLinearY: number[],
+  accelLinearZ: number[],
+  gpsAccel: number[],
+  accelThreshold: number = 0.5,
+  minEventDuration: number = 10
+): TransformationResult {
+  const result: TransformationResult = {
+    forwardAxis: null,
+    forwardAxisSign: 1,
+    confidence: 0,
+    samplesUsed: 0,
+    correlationScores: { x: 0, y: 0, z: 0 },
+    states: []
+  };
+
+  // Input validation
+  if (!accelLinearX || !accelLinearY || !accelLinearZ || !gpsAccel) {
+    console.warn('⚠️ Transformation learning: undefined input arrays');
+    return result;
   }
 
+  if (accelLinearX.length === 0 || accelLinearY.length === 0 ||
+      accelLinearZ.length === 0 || gpsAccel.length === 0) {
+    console.warn('⚠️ Transformation learning: empty input arrays');
+    return result;
+  }
+
+  // Use minimum length instead of requiring exact match
+  const minLength = Math.min(
+    accelLinearX.length,
+    accelLinearY.length,
+    accelLinearZ.length,
+    gpsAccel.length
+  );
+
+  if (accelLinearX.length !== gpsAccel.length) {
+    console.warn('⚠️ Transformation learning: array length mismatch, using minimum', {
+      accelX: accelLinearX.length,
+      accelY: accelLinearY.length,
+      accelZ: accelLinearZ.length,
+      gpsAccel: gpsAccel.length,
+      usingMinLength: minLength
+    });
+  }
+
+  console.log('>>> Starting event detection...', { totalSamples: minLength, threshold: accelThreshold, minDuration: minEventDuration });
+
+  const events: Array<{start: number, end: number, avgAccel: number}> = [];
+  let eventStart = -1;
+
+  for (let i = 0; i < minLength; i++) {
+    const significant = Math.abs(gpsAccel[i]) > accelThreshold;
+    
+    if (significant && eventStart === -1) {
+      eventStart = i;
+    } else if (!significant && eventStart !== -1) {
+      const duration = i - eventStart;
+      if (duration >= minEventDuration) {
+        const sum = gpsAccel.slice(eventStart, i).reduce((a, b) => a + b, 0);
+        const avgAccel = sum / duration;
+        events.push({ start: eventStart, end: i, avgAccel });
+      }
+      eventStart = -1;
+    }
+  }
+
+  console.log('>>> Event detection complete:', {
+    eventsFound: events.length,
+    events: events.map(e => ({ start: e.start, end: e.end, duration: e.end - e.start, avgAccel: e.avgAccel.toFixed(3) }))
+  });
+
+  const correlations = { x: 0, y: 0, z: 0 };
+  let totalSamples = 0;
+  
+  for (const event of events) {
+    const { start, end, avgAccel } = event;
+    const duration = end - start;
+    
+    const avgX = accelLinearX.slice(start, end).reduce((a, b) => a + b, 0) / duration;
+    const avgY = accelLinearY.slice(start, end).reduce((a, b) => a + b, 0) / duration;
+    const avgZ = accelLinearZ.slice(start, end).reduce((a, b) => a + b, 0) / duration;
+    
+    correlations.x += avgAccel * avgX * duration;
+    correlations.y += avgAccel * avgY * duration;
+    correlations.z += avgAccel * avgZ * duration;
+    
+    totalSamples += duration;
+    
+    result.states.push({
+      state: 'learning',
+      startIndex: start,
+      endIndex: end
+    });
+  }
+  
+  if (totalSamples > 0) {
+    correlations.x /= totalSamples;
+    correlations.y /= totalSamples;
+    correlations.z /= totalSamples;
+  }
+  
+  result.correlationScores = correlations;
+  result.samplesUsed = totalSamples;
+  
+  const absCorr = {
+    x: Math.abs(correlations.x),
+    y: Math.abs(correlations.y),
+    z: Math.abs(correlations.z)
+  };
+  
+  let maxCorr = 0;
+  let bestAxis: 'x' | 'y' | 'z' = 'x';
+  
+  if (absCorr.x > maxCorr) { maxCorr = absCorr.x; bestAxis = 'x'; }
+  if (absCorr.y > maxCorr) { maxCorr = absCorr.y; bestAxis = 'y'; }
+  if (absCorr.z > maxCorr) { maxCorr = absCorr.z; bestAxis = 'z'; }
+  
+  result.forwardAxis = bestAxis;
+  result.forwardAxisSign = correlations[bestAxis] >= 0 ? 1 : -1;
+  
+  const minSamplesForConfidence = 100;
+  const sampleConfidence = Math.min(1, totalSamples / minSamplesForConfidence);
+  
+  const secondBest = Math.max(
+    bestAxis !== 'x' ? absCorr.x : 0,
+    bestAxis !== 'y' ? absCorr.y : 0,
+    bestAxis !== 'z' ? absCorr.z : 0
+  );
+  
+  const separationConfidence = maxCorr > 0 ? 
+    Math.min(1, (maxCorr - secondBest) / maxCorr) : 0;
+  
+  result.confidence = sampleConfidence * separationConfidence;
+  
+  if (result.confidence > 0.7 && events.length > 0) {
+    const lastEvent = events[events.length - 1];
+    result.states.push({
+      state: 'locked',
+      startIndex: lastEvent.end,
+      endIndex: accelLinearX.length - 1
+    });
+  }
+  
+  console.log('>>> TRANSFORMATION LEARNING RESULT:', {
+    forwardAxis: result.forwardAxis,
+    sign: result.forwardAxisSign > 0 ? '+' : '-',
+    confidence: (result.confidence * 100).toFixed(1) + '%',
+    samplesUsed: result.samplesUsed,
+    correlations: {
+      x: result.correlationScores.x.toFixed(3),
+      y: result.correlationScores.y.toFixed(3),
+      z: result.correlationScores.z.toFixed(3)
+    },
+    learningPeriods: result.states.filter(s => s.state === 'learning').length
+  });
+  
   return result;
 }
 
@@ -516,60 +757,29 @@ export default function CalibrationAnalysisPage() {
   const [filterAlpha, setFilterAlpha] = useState(0.05); // EMA filter strength
   const [observerAlpha, setObserverAlpha] = useState(0.05); // Observer filter strength (heavy smoothing)
   const [signalControls, setSignalControls] = useState<Record<string, { visible: boolean; offset: number; color: string; width?: number; yAxisID?: string; label?: string }>>({
-    // Raw signals (faded)
-    accelRawX: { visible: false, offset: 0, color: 'rgba(239, 68, 68, 0.3)', width: 1 },
-    accelRawY: { visible: false, offset: 0, color: 'rgba(245, 158, 11, 0.3)', width: 1 },
-    accelRawZ: { visible: false, offset: 0, color: 'rgba(59, 130, 246, 0.3)', width: 1 },
+    // === RAW SIGNALS ===
+    accelRawX: { visible: false, offset: 0, color: 'rgba(239, 68, 68, 0.3)', width: 1, label: 'accelRawX' },
+    accelRawY: { visible: false, offset: 0, color: 'rgba(245, 158, 11, 0.3)', width: 1, label: 'accelRawY' },
+    accelRawZ: { visible: false, offset: 0, color: 'rgba(59, 130, 246, 0.3)', width: 1, label: 'accelRawZ' },
+    gyroRawX: { visible: false, offset: 0, color: 'rgba(139, 92, 246, 0.3)', width: 1, label: 'gyroRawX' },
+    gyroRawY: { visible: false, offset: 0, color: 'rgba(236, 72, 153, 0.3)', width: 1, label: 'gyroRawY' },
+    gyroRawZ: { visible: false, offset: 0, color: 'rgba(6, 182, 212, 0.3)', width: 1, label: 'gyroRawZ' },
+    magX: { visible: false, offset: 0, color: '#10b981', width: 1, label: 'magX' },
+    magY: { visible: false, offset: 0, color: '#14b8a6', width: 1, label: 'magY' },
+    magZ: { visible: false, offset: 0, color: '#22c55e', width: 1, label: 'magZ' },
 
-    // Filtered accel (solid)
-    accelFilteredX: { visible: false, offset: 0, color: '#ef4444', width: 2 },
-    accelFilteredY: { visible: false, offset: 0, color: '#f59e0b', width: 2 },
-    accelFilteredZ: { visible: false, offset: 0, color: '#3b82f6', width: 2 },
+    // === FILTERED SIGNALS ===
+    accelFilteredX: { visible: false, offset: 0, color: '#ef4444', width: 2, label: 'accelFilteredX' },
+    accelFilteredY: { visible: false, offset: 0, color: '#f97316', width: 2, label: 'accelFilteredY' },
+    accelFilteredZ: { visible: false, offset: 0, color: '#3b82f6', width: 2, label: 'accelFilteredZ' },
+    gyroFilteredX: { visible: false, offset: 0, color: '#8b5cf6', width: 2, label: 'gyroFilteredX' },
+    gyroFilteredY: { visible: false, offset: 0, color: '#ec4899', width: 2, label: 'gyroFilteredY' },
+    gyroFilteredZ: { visible: false, offset: 0, color: '#06b6d4', width: 2, label: 'gyroFilteredZ' },
 
-    // Gyro raw (faded)
-    gyroRawX: { visible: false, offset: 0, color: 'rgba(139, 92, 246, 0.3)', width: 1 },
-    gyroRawY: { visible: false, offset: 0, color: 'rgba(236, 72, 153, 0.3)', width: 1 },
-    gyroRawZ: { visible: false, offset: 0, color: 'rgba(6, 182, 212, 0.3)', width: 1 },
-
-    // Gyro filtered (solid)
-    gyroFilteredX: { visible: false, offset: 0, color: '#8b5cf6', width: 2 },
-    gyroFilteredY: { visible: false, offset: 0, color: '#ec4899', width: 2 },
-    gyroFilteredZ: { visible: false, offset: 0, color: '#06b6d4', width: 2 },
-
-    // Magnetometer
-    magX: { visible: false, offset: 0, color: '#10b981', width: 1 },
-    magY: { visible: false, offset: 0, color: '#14b8a6', width: 1 },
-    magZ: { visible: false, offset: 0, color: '#22c55e', width: 1 },
-
-    // === LATERAL ACCEL TRIFECTA ===
-    accelY_real: { visible: true, offset: 0, color: '#ef4444', width: 3, label: 'accelLinearY_measured' },
-    accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: '○ Accel Y (gyro)' },
-    accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: '○ Accel Y (mag)' },
-
-    // === ROTATION RATE TRIFECTA ===
-    gyroZ_real: { visible: false, offset: 0, color: '#3b82f6', width: 3, label: '✓ Gyro Z (real)' },
-    gyroZ_accel: { visible: false, offset: 0, color: '#06b6d4', width: 2, label: '○ Gyro Z (accel)' },
-    gyroZ_mag: { visible: false, offset: 0, color: '#0891b2', width: 2, label: '○ Gyro Z (mag)' },
-
-    // === HEADING TRIFECTA ===
-    heading_real: { visible: false, offset: 0, color: '#8b5cf6', width: 3, label: '✓ Heading (real)' },
-    heading_accel: { visible: false, offset: 0, color: '#a855f7', width: 2, label: '○ Heading (accel)' },
-    heading_gyro: { visible: false, offset: 0, color: '#c084fc', width: 2, label: '○ Heading (gyro)' },
-
-    // Transformed (primes) - MAIN SIGNALS (OUTPUT)
-    xPrime: { visible: true, offset: 0, color: '#dc2626', width: 3 },
-    yPrime: { visible: false, offset: 0, color: '#2563eb', width: 3 },
-    zPrime: { visible: false, offset: 0, color: '#16a34a', width: 3 },
-
-    // Virtual accelerations
-    virtualForward: { visible: true, offset: 0, color: '#10b981', width: 2 },
-    virtualLateral: { visible: false, offset: 0, color: '#f59e0b', width: 2 },
-
-    // GPS Speed (right axis)
-    gpsSpeed: { visible: true, offset: 0, color: '#8b5cf6', width: 2, yAxisID: 'y1' },
-
-    // Confidence
-    confidence: { visible: false, offset: 0, color: '#ec4899', width: 1, yAxisID: 'y1' }
+    // === LINEAR SIGNALS ===
+    accelLinearX: { visible: false, offset: 0, color: '#dc2626', width: 3, label: 'accelLinearX' },
+    accelLinearY: { visible: true, offset: 0, color: '#f97316', width: 3, label: 'accelLinearY' },
+    accelLinearZ: { visible: false, offset: 0, color: '#2563eb', width: 3, label: 'accelLinearZ' }
   });
 
   // Auth guard
@@ -1428,173 +1638,90 @@ export default function CalibrationAnalysisPage() {
       addDataset('magZ', displayMagZ, signalControls.magZ);
     }
 
-    // Add transformed (primes) - pre-calculated from calibration, NOT affected by filter slider
-    const xPrimeData = calibrationResult.transformed.map(t => t.x);
-    const yPrimeData = calibrationResult.transformed.map(t => t.y);
-    const zPrimeData = calibrationResult.transformed.map(t => t.z);
-
-    console.log('xPrime data check:', {
-      length: xPrimeData.length,
-      min: Math.min(...xPrimeData),
-      max: Math.max(...xPrimeData),
-      avg: xPrimeData.reduce((a, b) => a + b, 0) / xPrimeData.length,
-      sample: xPrimeData.slice(0, 10)
-    });
-
-    addDataset('xPrime', xPrimeData, signalControls.xPrime);
-    addDataset('yPrime', yPrimeData, signalControls.yPrime);
-    addDataset('zPrime', zPrimeData, signalControls.zPrime);
-
-    // Add virtual accelerations
-    addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);
-    addDataset('virtualLateral', calibrationResult.virtualLateralAccel, signalControls.virtualLateral);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
     console.log('=== TRIFECTA DEBUG ===');
     console.log('Lateral Accel Trifecta:', {
       measured: {
-        min: Math.min(...calibrationResult.accelY_measured),
-        max: Math.max(...calibrationResult.accelY_measured),
-        avg: calibrationResult.accelY_measured.reduce((a, b) => a + b, 0) / calibrationResult.accelY_measured.length
+        min: Math.min(...calibrationResult.accelLinearYFiltered),
+        max: Math.max(...calibrationResult.accelLinearYFiltered),
+        avg: calibrationResult.accelLinearYFiltered.reduce((a, b) => a + b, 0) / calibrationResult.accelLinearYFiltered.length
       },
       fromGyro: {
-        min: Math.min(...calibrationResult.accelY_fromGyro),
-        max: Math.max(...calibrationResult.accelY_fromGyro),
-        avg: calibrationResult.accelY_fromGyro.reduce((a, b) => a + b, 0) / calibrationResult.accelY_fromGyro.length
+        min: Math.min(...calibrationResult.observerAccelLinearY_fromGyro),
+        max: Math.max(...calibrationResult.observerAccelLinearY_fromGyro),
+        avg: calibrationResult.observerAccelLinearY_fromGyro.reduce((a, b) => a + b, 0) / calibrationResult.observerAccelLinearY_fromGyro.length
       },
       fromMag: {
-        min: Math.min(...calibrationResult.accelY_fromMag),
-        max: Math.max(...calibrationResult.accelY_fromMag),
-        avg: calibrationResult.accelY_fromMag.reduce((a, b) => a + b, 0) / calibrationResult.accelY_fromMag.length
+        min: Math.min(...calibrationResult.observerAccelLinearY_fromMag),
+        max: Math.max(...calibrationResult.observerAccelLinearY_fromMag),
+        avg: calibrationResult.observerAccelLinearY_fromMag.reduce((a, b) => a + b, 0) / calibrationResult.observerAccelLinearY_fromMag.length
       }
     });
 
     console.log('Rotation Rate Trifecta:', {
       measured: {
-        min: Math.min(...calibrationResult.gyroZ_measured),
-        max: Math.max(...calibrationResult.gyroZ_measured),
-        avg: calibrationResult.gyroZ_measured.reduce((a, b) => a + b, 0) / calibrationResult.gyroZ_measured.length
+        min: Math.min(...calibrationResult.gyroFilteredZ_observed),
+        max: Math.max(...calibrationResult.gyroFilteredZ_observed),
+        avg: calibrationResult.gyroFilteredZ_observed.reduce((a, b) => a + b, 0) / calibrationResult.gyroFilteredZ_observed.length
       },
       fromAccel: {
-        min: Math.min(...calibrationResult.gyroZ_fromAccel),
-        max: Math.max(...calibrationResult.gyroZ_fromAccel),
-        avg: calibrationResult.gyroZ_fromAccel.reduce((a, b) => a + b, 0) / calibrationResult.gyroZ_fromAccel.length
+        min: Math.min(...calibrationResult.observerGyroZ_fromAccel),
+        max: Math.max(...calibrationResult.observerGyroZ_fromAccel),
+        avg: calibrationResult.observerGyroZ_fromAccel.reduce((a, b) => a + b, 0) / calibrationResult.observerGyroZ_fromAccel.length
       },
       fromMag: {
-        min: Math.min(...calibrationResult.gyroZ_fromMag),
-        max: Math.max(...calibrationResult.gyroZ_fromMag),
-        avg: calibrationResult.gyroZ_fromMag.reduce((a, b) => a + b, 0) / calibrationResult.gyroZ_fromMag.length
+        min: Math.min(...calibrationResult.observerGyroZ_fromMag),
+        max: Math.max(...calibrationResult.observerGyroZ_fromMag),
+        avg: calibrationResult.observerGyroZ_fromMag.reduce((a, b) => a + b, 0) / calibrationResult.observerGyroZ_fromMag.length
       }
     });
 
     console.log('Heading Trifecta:', {
       measured: {
-        min: Math.min(...calibrationResult.heading_measured),
-        max: Math.max(...calibrationResult.heading_measured),
-        avg: calibrationResult.heading_measured.reduce((a, b) => a + b, 0) / calibrationResult.heading_measured.length
+        min: Math.min(...calibrationResult.heading_observed),
+        max: Math.max(...calibrationResult.heading_observed),
+        avg: calibrationResult.heading_observed.reduce((a, b) => a + b, 0) / calibrationResult.heading_observed.length
       },
       fromAccel: {
-        min: Math.min(...calibrationResult.heading_fromAccel),
-        max: Math.max(...calibrationResult.heading_fromAccel),
-        avg: calibrationResult.heading_fromAccel.reduce((a, b) => a + b, 0) / calibrationResult.heading_fromAccel.length
+        min: Math.min(...calibrationResult.observerHeading_fromAccel),
+        max: Math.max(...calibrationResult.observerHeading_fromAccel),
+        avg: calibrationResult.observerHeading_fromAccel.reduce((a, b) => a + b, 0) / calibrationResult.observerHeading_fromAccel.length
       },
       fromGyro: {
-        min: Math.min(...calibrationResult.heading_fromGyro),
-        max: Math.max(...calibrationResult.heading_fromGyro),
-        avg: calibrationResult.heading_fromGyro.reduce((a, b) => a + b, 0) / calibrationResult.heading_fromGyro.length
+        min: Math.min(...calibrationResult.observerHeading_fromGyro),
+        max: Math.max(...calibrationResult.observerHeading_fromGyro),
+        avg: calibrationResult.observerHeading_fromGyro.reduce((a, b) => a + b, 0) / calibrationResult.observerHeading_fromGyro.length
       }
     });
 
-    // === ADD OBSERVER DATASETS TO CHART ===
-    console.log('=== ADDING OBSERVER DATASETS TO CHART ===');
-    console.log('Adding observer datasets:', {
-      hasAccelYData: !!calibrationResult.accelY_measured,
-      accelYLength: calibrationResult.accelY_measured?.length || 0,
-      hasGyroZData: !!calibrationResult.gyroZ_measured,
-      gyroZLength: calibrationResult.gyroZ_measured?.length || 0,
-      hasHeadingData: !!calibrationResult.heading_measured,
-      headingLength: calibrationResult.heading_measured?.length || 0,
+    // === ADD LINEAR ACCELERATION DATASETS TO CHART ===
+    console.log('=== ADDING LINEAR ACCELERATION DATASETS TO CHART ===');
+    console.log('Adding linear acceleration datasets:', {
+      hasAccelXData: !!calibrationResult.accelLinearXFiltered,
+      accelXLength: calibrationResult.accelLinearXFiltered?.length || 0,
+      hasAccelYData: !!calibrationResult.accelLinearYFiltered,
+      accelYLength: calibrationResult.accelLinearYFiltered?.length || 0,
+      hasAccelZData: !!calibrationResult.accelLinearZFiltered,
+      accelZLength: calibrationResult.accelLinearZFiltered?.length || 0,
       signalControlsExist: {
-        accelY_real: !!signalControls.accelY_real,
-        accelY_gyro: !!signalControls.accelY_gyro,
-        accelY_mag: !!signalControls.accelY_mag,
-        gyroZ_real: !!signalControls.gyroZ_real,
-        gyroZ_accel: !!signalControls.gyroZ_accel,
-        gyroZ_mag: !!signalControls.gyroZ_mag,
-        heading_real: !!signalControls.heading_real,
-        heading_accel: !!signalControls.heading_accel,
-        heading_gyro: !!signalControls.heading_gyro
+        accelLinearX: !!signalControls.accelLinearX,
+        accelLinearY: !!signalControls.accelLinearY,
+        accelLinearZ: !!signalControls.accelLinearZ
       }
     });
 
-    // Add trifecta datasets with conditional checks
-    if (calibrationResult.accelY_measured) {
-      addDataset('accelY_real', calibrationResult.accelY_measured, signalControls.accelY_real);
-      addDataset('accelY_gyro', calibrationResult.accelY_fromGyro, signalControls.accelY_gyro);
-      addDataset('accelY_mag', calibrationResult.accelY_fromMag, signalControls.accelY_mag);
+    // Add linear acceleration signals (gravity removed, filtered)
+    if (calibrationResult.accelLinearXFiltered) {
+      addDataset('accelLinearX', calibrationResult.accelLinearXFiltered, signalControls.accelLinearX);
+    }
+    if (calibrationResult.accelLinearYFiltered) {
+      addDataset('accelLinearY', calibrationResult.accelLinearYFiltered, signalControls.accelLinearY);
+    }
+    if (calibrationResult.accelLinearZFiltered) {
+      addDataset('accelLinearZ', calibrationResult.accelLinearZFiltered, signalControls.accelLinearZ);
     }
 
-    if (calibrationResult.gyroZ_measured) {
-      addDataset('gyroZ_real', calibrationResult.gyroZ_measured, signalControls.gyroZ_real);
-      addDataset('gyroZ_accel', calibrationResult.gyroZ_fromAccel, signalControls.gyroZ_accel);
-      addDataset('gyroZ_mag', calibrationResult.gyroZ_fromMag, signalControls.gyroZ_mag);
-    }
-
-    if (calibrationResult.heading_measured) {
-      addDataset('heading_real', calibrationResult.heading_measured, signalControls.heading_real);
-      addDataset('heading_accel', calibrationResult.heading_fromAccel, signalControls.heading_accel);
-      addDataset('heading_gyro', calibrationResult.heading_fromGyro, signalControls.heading_gyro);
-    }
-
-    // Add GPS speed (right axis) - interpolate to match accelerometer length FIRST
-    let interpolatedGPSSpeed: number[] = [];
-
-    console.log('GPS interpolation debug:', {
-      hasGPSData: !!session.gpsData,
-      gpsLength: session.gpsData?.length || 0,
-      accelLength: session.accelerometerData.length,
-      firstGPS: session.gpsData?.[0],
-      lastGPS: session.gpsData?.[session.gpsData.length - 1]
-    });
-
-    if (session.gpsData && session.gpsData.length > 0) {
-      const targetLength = session.accelerometerData.length;
-
-      for (let i = 0; i < targetLength; i++) {
-        const gpsRatio = (i / targetLength) * session.gpsData.length;
-        const prevIndex = Math.floor(gpsRatio);
-        const nextIndex = Math.min(prevIndex + 1, session.gpsData.length - 1);
-
-        let speed = 0;
-        if (prevIndex === nextIndex) {
-          speed = session.gpsData[prevIndex]?.mph || 0;
-        } else {
-          const ratio = gpsRatio - prevIndex;
-          const prevSpeed = session.gpsData[prevIndex]?.mph || 0;
-          const nextSpeed = session.gpsData[nextIndex]?.mph || 0;
-          speed = prevSpeed + (nextSpeed - prevSpeed) * ratio;
-        }
-
-        interpolatedGPSSpeed.push(speed);
-      }
-
-      console.log('GPS speed interpolation result:', {
-        outputLength: interpolatedGPSSpeed.length,
-        min: Math.min(...interpolatedGPSSpeed),
-        max: Math.max(...interpolatedGPSSpeed),
-        avg: interpolatedGPSSpeed.reduce((a, b) => a + b, 0) / interpolatedGPSSpeed.length,
-        sample: interpolatedGPSSpeed.slice(0, 10)
-      });
-    } else {
-      interpolatedGPSSpeed = Array(session.accelerometerData.length).fill(0);
-    }
-
-    // NOW slice it like all other signals
-    addDataset('gpsSpeed', interpolatedGPSSpeed, signalControls.gpsSpeed);
-
-    // Add confidence
-    const confidencePercent = calibrationResult.confidence.map(c => c * 100);
-    addDataset('confidence', confidencePercent, signalControls.confidence);
 
     // Create labels
     const startIndex = viewMode === 'scrollable' ? scrollPosition : 0;
