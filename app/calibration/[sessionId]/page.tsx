@@ -96,6 +96,10 @@ interface CalibrationResult {
   virtualForwardAccel: number[];
   virtualLateralAccel: number[];
   actualSampleRate: number;
+  // Linear acceleration (gravity removed, filtered with observerAlpha)
+  accelLinearX_measured: number[];
+  accelLinearY_measured: number[];
+  accelLinearZ_measured: number[];
   // Cross-verification trifecta
   accelY_measured: number[];
   accelY_fromGyro: number[];
@@ -175,6 +179,10 @@ function applyFloatingCalibration(
     virtualForwardAccel: [],
     virtualLateralAccel: [],
     actualSampleRate: 60,
+    // Linear acceleration (gravity removed, filtered with observerAlpha)
+    accelLinearX_measured: [],
+    accelLinearY_measured: [],
+    accelLinearZ_measured: [],
     // Cross-verification trifecta
     accelY_measured: [],
     accelY_fromGyro: [],
@@ -374,6 +382,11 @@ function applyFloatingCalibration(
         currentSpeed > 1 ? (filteredLinearAccel.y / currentSpeed).toFixed(4) : '0.0000 (speed too low)');
       console.log('  gyroZ_fromMag = magHeadingRate =', magHeadingRate.toFixed(4), '(from filtered mag heading change)');
     }
+
+    // === LINEAR ACCELERATION (gravity removed, filtered) ===
+    result.accelLinearX_measured.push(filteredLinearAccel.x);
+    result.accelLinearY_measured.push(filteredLinearAccel.y);
+    result.accelLinearZ_measured.push(filteredLinearAccel.z);
 
     // === LATERAL ACCELERATION TRIFECTA (using FILTERED signals) ===
     // 1. Measured from FILTERED accelerometer (after removing gravity)
@@ -602,15 +615,20 @@ export default function CalibrationAnalysisPage() {
     gyroFilteredY: { visible: false, offset: 0, color: '#ec4899', width: 2 },
     gyroFilteredZ: { visible: false, offset: 0, color: '#06b6d4', width: 2 },
 
+    // Linear acceleration (gravity removed, filtered)
+    accelLinearX_measured: { visible: false, offset: 0, color: '#dc2626', width: 2 },
+    accelLinearY_measured: { visible: false, offset: 0, color: '#ea580c', width: 2 },
+    accelLinearZ_measured: { visible: false, offset: 0, color: '#2563eb', width: 2 },
+
     // Magnetometer
     magX: { visible: false, offset: 0, color: '#10b981', width: 1 },
     magY: { visible: false, offset: 0, color: '#14b8a6', width: 1 },
     magZ: { visible: false, offset: 0, color: '#22c55e', width: 1 },
 
-    // === LATERAL ACCEL TRIFECTA ===
-    accelY_real: { visible: true, offset: 0, color: '#ef4444', width: 3, label: 'accelLinearY_measured' },
-    accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'accelLinearY_fromGyro' },
-    accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: 'accelLinearY_fromMag' },
+    // === LATERAL ACCEL TRIFECTA (transformed to vehicle frame) ===
+    accelY_real: { visible: true, offset: 0, color: '#ef4444', width: 3, label: 'accelTransY_measured' },
+    accelY_gyro: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'accelTransY_fromGyro' },
+    accelY_mag: { visible: true, offset: 0, color: '#84cc16', width: 2, label: 'accelTransY_fromMag' },
 
     // === ROTATION RATE TRIFECTA ===
     gyroZ_real: { visible: false, offset: 0, color: '#3b82f6', width: 3, label: 'gyroZ_measured' },
@@ -638,6 +656,9 @@ export default function CalibrationAnalysisPage() {
     confidence: { visible: false, offset: 0, color: '#ec4899', width: 1, yAxisID: 'y1' }
   });
 
+  // Track initial mount to avoid saving controls before loading from localStorage
+  const [isInitialMount, setIsInitialMount] = useState(true);
+
   // Auth guard
   useEffect(() => {
     if (!loading && !user) {
@@ -652,13 +673,19 @@ export default function CalibrationAnalysisPage() {
 
   // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
-    const STORAGE_VERSION = 2; // Increment this when labels/structure changes
+    console.log('🚀 LOAD EFFECT RUNNING - This should appear on mount!');
+    const STORAGE_VERSION = 3; // Increment this when labels/structure changes (added accelLinearX/Z)
     const savedControls = localStorage.getItem('masterSignalViewerControls');
     const savedVersion = localStorage.getItem('masterSignalViewerVersion');
-    
+
+    console.log('🔍 Version check - Expected:', STORAGE_VERSION, 'Saved:', savedVersion, 'Parsed:', parseInt(savedVersion || '0'));
+    console.log('🔍 savedControls exists:', !!savedControls);
+
     if (savedControls && parseInt(savedVersion || '0') === STORAGE_VERSION) {
       try {
         const parsed = JSON.parse(savedControls);
+        console.log('📂 Loading saved controls from localStorage, version matches:', STORAGE_VERSION);
+        console.log('📂 Sample saved data - accelFilteredX:', parsed.accelFilteredX);
         setSignalControls(prev => ({
           ...prev,
           ...parsed // Merge saved with defaults
@@ -673,10 +700,16 @@ export default function CalibrationAnalysisPage() {
       localStorage.setItem('masterSignalViewerVersion', STORAGE_VERSION.toString());
     }
   }, []);
-  // Save signal controls to localStorage when they change
+  // Save signal controls to localStorage when they change (skip initial mount)
   useEffect(() => {
+    if (isInitialMount) {
+      console.log('⏭️  Skipping save on initial mount');
+      setIsInitialMount(false);
+      return;
+    }
+    console.log('💾 Saving signal controls to localStorage...', Object.keys(signalControls).length, 'signals');
     localStorage.setItem('masterSignalViewerControls', JSON.stringify(signalControls));
-  }, [signalControls]);
+  }, [signalControls, isInitialMount]);
 
   // Load filter settings from localStorage on mount
   useEffect(() => {
@@ -1495,6 +1528,13 @@ export default function CalibrationAnalysisPage() {
     addDataset('gyroFilteredX', filteredGyroX, signalControls.gyroFilteredX);
     addDataset('gyroFilteredY', filteredGyroY, signalControls.gyroFilteredY);
     addDataset('gyroFilteredZ', filteredGyroZ, signalControls.gyroFilteredZ);
+
+    const accelLinearX = calibrationResult.accelLinearX_measured;
+    const accelLinearY = calibrationResult.accelLinearY_measured;
+    const accelLinearZ = calibrationResult.accelLinearZ_measured;
+    addDataset('accelLinearX_measured', accelLinearX, signalControls.accelLinearX_measured);
+    addDataset('accelLinearY_measured', accelLinearY, signalControls.accelLinearY_measured);
+    addDataset('accelLinearZ_measured', accelLinearZ, signalControls.accelLinearZ_measured);
 
     if (displayMagX.length > 0) {
       addDataset('magX', displayMagX, signalControls.magX);
@@ -2378,7 +2418,11 @@ export default function CalibrationAnalysisPage() {
 
                 {/* Signal Controls Panel - Readable Size with Tall Scroll Box */}
                 <div className="grid grid-cols-4 gap-1 mb-2 max-h-64 overflow-y-auto bg-gray-50 p-2 rounded text-xs">
-                  {Object.entries(signalControls).map(([key, control]) => (
+                  {(() => {
+                  console.log('🔍 Signal controls keys:', Object.keys(signalControls).length, 'signals');
+                  console.log('🔍 accelLinear keys:', Object.keys(signalControls).filter(k => k.includes('accelLinear')));
+                  return Object.entries(signalControls);
+                })().map(([key, control]) => (
                     <div key={key} className="flex items-center gap-1 py-1">
                       <input
                         type="checkbox"
