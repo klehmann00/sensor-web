@@ -250,9 +250,9 @@ function applyFloatingCalibration(
     result.accelFilteredZ.push(accelFilteredZ);
 
     // === FILTER RAW GYRO (for future calculations using filterAlpha) ===
-    gyroFilteredX = filterAlpha * gyro.x + (1 - filterAlpha) * gyroFilteredX;
-    gyroFilteredY = filterAlpha * gyro.y + (1 - filterAlpha) * gyroFilteredY;
-    gyroFilteredZ = filterAlpha * gyro.z + (1 - filterAlpha) * gyroFilteredZ;
+    gyroFilteredX = filterAlpha * gyroFilteredX + (1 - filterAlpha) * gyro.x;
+    gyroFilteredY = filterAlpha * gyroFilteredY + (1 - filterAlpha) * gyro.y;
+    gyroFilteredZ = filterAlpha * gyroFilteredZ + (1 - filterAlpha) * gyro.z;
 
     // Store filtered gyro for export
     result.gyroFilteredX.push(gyroFilteredX);
@@ -2047,76 +2047,6 @@ export default function CalibrationAnalysisPage() {
           </div>
         ) : session && calibrationResult ? (
           <>
-            {/* Debug Diagnostic Panel */}
-            <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-4 mb-4">
-              <h3 className="font-bold text-lg mb-2">🔍 Debug Info</h3>
-              <div className="grid grid-cols-4 gap-4 text-sm">
-                <div>
-                  <strong>Scroll Position:</strong> {scrollPosition}<br/>
-                  <strong>Window Size:</strong> {windowSize}<br/>
-                  <strong>View Mode:</strong> {viewMode}
-                </div>
-                <div>
-                  <strong>Total Data Points:</strong> {session.accelerometerData.length}<br/>
-                  <strong>GPS Data Points (orig):</strong> {session.gpsData?.length || 0}<br/>
-                  <strong>GPS with speed &gt; 0:</strong> {session.gpsData?.filter(g => g.mps > 0).length || 0}<br/>
-                  <strong>GPS Sample Rate:</strong> {session.gpsData?.length ? ((session.gpsData.length / session.accelerometerData.length) * 60).toFixed(1) : 0} Hz<br/>
-                  <strong>GPS Coverage:</strong> {session.gpsData?.length ? ((session.gpsData.length / session.accelerometerData.length) * 100).toFixed(1) : 0}%<br/>
-                  <strong>GPS Interpolated:</strong> {session.gpsData?.length !== session.accelerometerData.length ? 'Yes' : 'No'}
-                </div>
-                <div>
-                  <strong>Forward Updates:</strong> {calibrationResult.forwardUpdateCount[calibrationResult.forwardUpdateCount.length - 1]}<br/>
-                  <strong>Forward Magnitude:</strong> {(() => {
-                    const last = calibrationResult.forwardHistory[calibrationResult.forwardHistory.length - 1];
-                    return Math.sqrt(last.x ** 2 + last.y ** 2 + last.z ** 2).toFixed(3);
-                  })()}<br/>
-                  <strong>Sample GPS Speed:</strong> {session.gpsData?.[100]?.mph.toFixed(1) || 'N/A'} mph
-                </div>
-                <div>
-                  <strong>Gravity Vector (final):</strong><br/>
-                  &nbsp;&nbsp;X: {calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].x.toFixed(3)} m/s²<br/>
-                  &nbsp;&nbsp;Y: {calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].y.toFixed(3)} m/s²<br/>
-                  &nbsp;&nbsp;Z: {calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].z.toFixed(3)} m/s²<br/>
-                  <strong>Gravity Magnitude:</strong> {Math.sqrt(
-                    calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].x ** 2 +
-                    calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].y ** 2 +
-                    calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].z ** 2
-                  ).toFixed(3)} m/s² (target: 9.800)<br/>
-                  <strong>Gravity Error:</strong> {(
-                    (Math.sqrt(
-                      calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].x ** 2 +
-                      calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].y ** 2 +
-                      calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1].z ** 2
-                    ) - 9.8) / 9.8 * 100
-                  ).toFixed(1)}%<br/>
-                  <strong>Actual Sample Rate:</strong> {calibrationResult.actualSampleRate?.toFixed(1) || '60.0'} Hz<br/>
-                  <strong>Assumed Rate:</strong> 60.0 Hz
-                  {calibrationResult.actualSampleRate && Math.abs(calibrationResult.actualSampleRate - 60) > 5 && (
-                    <>
-                      <br/>
-                      <span className="text-orange-600 font-semibold text-xs">
-                        ⚠️ Rate mismatch detected!
-                      </span>
-                    </>
-                  )}
-                </div>
-                <div>
-                  <strong>Data Point Counts:</strong><br/>
-                  &nbsp;&nbsp;Session Accel Data: {session.accelerometerData.length}<br/>
-                  &nbsp;&nbsp;Session GPS Data: {session.gpsData?.length || 0}<br/>
-                  &nbsp;&nbsp;Calibration Transformed: {calibrationResult.transformed.length}<br/>
-                  &nbsp;&nbsp;Calibration Gravity History: {calibrationResult.gravityHistory.length}<br/>
-                  &nbsp;&nbsp;Calibration Forward History: {calibrationResult.forwardHistory.length}<br/>
-                  {calibrationResult.transformed.length !== session.accelerometerData.length && (
-                    <span className="text-red-600 font-semibold text-xs">
-                      <br/>❌ LENGTH MISMATCH! Transformed ({calibrationResult.transformed.length})
-                      ≠ Accel ({session.accelerometerData.length})
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
             {/* Session Metadata */}
             <div className="bg-white rounded-lg shadow-lg p-2 mb-2">
               <h2 className="text-xl font-bold mb-3 text-gray-800">Session Information</h2>
@@ -2143,127 +2073,6 @@ export default function CalibrationAnalysisPage() {
                 </div>
               </div>
             </div>
-
-            {/* Calibration Parameters */}
-            <div className="bg-white rounded-lg shadow-lg p-2 mb-2">
-              <h2 className="text-xl font-bold mb-3 text-gray-800">Calibration Parameters</h2>
-
-              <div className="space-y-3">
-                {/* Smoothing Parameter */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-sm font-semibold text-gray-700">
-                      Smoothing (α): <span className="text-blue-600">{alpha.toFixed(2)}</span>
-                    </label>
-                    <span className="text-xs text-gray-500">0.90-0.99</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.90"
-                    max="0.99"
-                    step="0.01"
-                    value={alpha}
-                    onChange={(e) => setAlpha(parseFloat(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                  />
-                </div>
-
-                {/* Orientation Filter Alpha (EMA) */}
-                <div className="mb-3">
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-sm font-medium">
-                      Orientation Filter Strength (α):
-                    </label>
-                    <span className="text-sm font-semibold text-blue-600">
-                      {orientationFilterAlpha.toFixed(3)} ({orientationFilterAlpha < 0.1 ? 'Heavy' : orientationFilterAlpha < 0.3 ? 'Moderate' : 'Light'} smoothing)
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.01"
-                    max="0.95"
-                    step="0.01"
-                    value={orientationFilterAlpha}
-                    onChange={(e) => setOrientationFilterAlpha(parseFloat(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>0.01 (max smooth)</span>
-                    <span>0.05 (heavy)</span>
-                    <span>0.20 (moderate)</span>
-                    <span>0.50 (light)</span>
-                    <span>0.95 (minimal)</span>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-1">
-                    Exponential Moving Average (EMA) for GPS/sensor correlation. Lower α = smoother but more lag.
-                    Default 0.01 (heavy smoothing) is recommended for orientation learning as we only need slow trends.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                <p className="text-xs text-gray-700">
-                  <strong>GPS-Based Calibration:</strong> GPS speed changes automatically detect forward direction. The smoothing parameter controls adaptation rate (higher = more smoothing, slower adaptation). Forward vector updates only when GPS detects meaningful acceleration.
-                </p>
-              </div>
-            </div>
-
-            {/* Step 2: Forward Vector Detection */}
-            {calibrationResult && (
-              <div className="bg-purple-50 border border-purple-300 rounded-lg p-3 mb-2">
-                <h3 className="font-bold text-sm mb-2">Step 2: Forward Vector Detection</h3>
-                {(() => {
-                  const finalForward = calibrationResult.forwardHistory[calibrationResult.forwardHistory.length - 1];
-                  const finalGravity = calibrationResult.gravityHistory[calibrationResult.gravityHistory.length - 1];
-
-                  const forwardMag = Math.sqrt(finalForward.x**2 + finalForward.y**2 + finalForward.z**2);
-                  const gravityMag = Math.sqrt(finalGravity.x**2 + finalGravity.y**2 + finalGravity.z**2);
-
-                  // Check perpendicularity: dot(forward, gravity) should be ≈ 0
-                  const dotProduct = (finalForward.x * finalGravity.x +
-                                     finalForward.y * finalGravity.y +
-                                     finalForward.z * finalGravity.z);
-                  const normalizedDot = dotProduct / (forwardMag * gravityMag);
-                  const angleDegrees = Math.acos(Math.abs(normalizedDot)) * 180 / Math.PI;
-
-                  // Check if forward is found
-                  const forwardPass = forwardMag > 0.5;
-                  const perpendicularPass = angleDegrees > 80 && angleDegrees < 100; // Should be ~90°
-
-                  return (
-                    <div className="text-sm">
-                      <div className={`font-bold ${forwardPass ? 'text-green-600' : 'text-red-600'}`}>
-                        {forwardPass ? '✅ FORWARD VECTOR FOUND' : '❌ FORWARD VECTOR WEAK'}
-                      </div>
-                      <div className="text-xs mt-1">
-                        Magnitude: {forwardMag.toFixed(3)} m/s²
-                        (target: &gt; 0.5 m/s², current: {forwardPass ? 'PASS' : 'FAIL'})
-                      </div>
-                      <div className="text-xs">
-                        Vector: ({finalForward.x.toFixed(3)}, {finalForward.y.toFixed(3)}, {finalForward.z.toFixed(3)})
-                      </div>
-                      <div className={`text-xs mt-1 ${perpendicularPass ? 'text-green-600' : 'text-orange-600'}`}>
-                        Angle to gravity: {angleDegrees.toFixed(1)}°
-                        (target: 90°, {perpendicularPass ? 'perpendicular ✓' : 'NOT perpendicular ✗'})
-                      </div>
-                      {!forwardPass && (
-                        <div className="text-xs mt-2 p-2 bg-yellow-100 border border-yellow-400 rounded">
-                          ⚠️ Forward vector too weak. This causes small x&apos;/y&apos;/z&apos; values.
-                          Need more GPS acceleration events or lower filter threshold.
-                        </div>
-                      )}
-                      {!perpendicularPass && (
-                        <div className="text-xs mt-2 p-2 bg-orange-100 border border-orange-400 rounded">
-                          ⚠️ Forward not perpendicular to gravity. This causes incorrect transformation.
-                          May need to project forward onto horizontal plane.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
 
             {/* Master Signal Viewer - Automotive-style comprehensive display */}
             {masterSignalViewerData && (
@@ -2329,20 +2138,37 @@ export default function CalibrationAnalysisPage() {
                     </button>
                   </div>
 
-                  {/* Filter Strength */}
+                  {/* Accel Filter */}
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold">Filter:</span>
+                    <span className="text-sm font-semibold">Accel Filter:</span>
                     <input
                       type="range"
-                      min="0.01"
-                      max="0.50"
+                      min="0.90"
+                      max="0.99"
+                      step="0.01"
+                      value={alpha}
+                      onChange={(e) => setAlpha(parseFloat(e.target.value))}
+                      className="w-32"
+                    />
+                    <span className="text-xs text-gray-600">
+                      α={alpha.toFixed(2)}
+                    </span>
+                  </div>
+
+                  {/* Gyro Filter Strength */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">Gyro Filter:</span>
+                    <input
+                      type="range"
+                      min="0.50"
+                      max="0.99"
                       step="0.01"
                       value={filterAlpha}
                       onChange={(e) => setFilterAlpha(parseFloat(e.target.value))}
                       className="w-32"
                     />
                     <span className="text-xs text-gray-600">
-                      α={filterAlpha.toFixed(2)} ({filterAlpha < 0.1 ? 'Heavy' : filterAlpha < 0.3 ? 'Medium' : 'Light'})
+                      α={filterAlpha.toFixed(2)} ({filterAlpha > 0.90 ? 'Heavy' : filterAlpha > 0.70 ? 'Medium' : 'Light'})
                     </span>
                   </div>
 
@@ -2359,7 +2185,24 @@ export default function CalibrationAnalysisPage() {
                       className="w-32"
                     />
                     <span className="text-xs text-gray-600">
-                      α={observerAlpha.toFixed(2)} ({observerAlpha < 0.05 ? 'Max' : observerAlpha < 0.1 ? 'Heavy' : 'Medium'} smoothing)
+                      α={observerAlpha.toFixed(2)} ({observerAlpha > 0.15 ? 'Heavy' : observerAlpha > 0.08 ? 'Medium' : 'Light'} smoothing)
+                    </span>
+                  </div>
+
+                  {/* Orientation Filter */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">Orientation:</span>
+                    <input
+                      type="range"
+                      min="0.01"
+                      max="0.95"
+                      step="0.01"
+                      value={orientationFilterAlpha}
+                      onChange={(e) => setOrientationFilterAlpha(parseFloat(e.target.value))}
+                      className="w-32"
+                    />
+                    <span className="text-xs text-gray-600">
+                      α={orientationFilterAlpha.toFixed(2)} ({orientationFilterAlpha > 0.7 ? 'Heavy' : orientationFilterAlpha > 0.3 ? 'Medium' : 'Light'})
                     </span>
                   </div>
 
@@ -2373,47 +2216,6 @@ export default function CalibrationAnalysisPage() {
                   >
                     Reset Settings
                   </button>
-                </div>
-
-                {/* Cross-Verification Trifecta Explanation Panel */}
-                <div className="bg-blue-50 border border-blue-300 rounded p-3 mb-3 text-xs">
-                  <h3 className="font-bold text-sm mb-2">🔬 Cross-Verification Trifecta:</h3>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <strong className="text-red-700">LATERAL ACCEL (m/s²):</strong>
-                      <ul className="list-disc ml-4 mt-1 space-y-1 text-[10px]">
-                        <li><strong>✓ accelY_real:</strong> Measured from accelerometer</li>
-                        <li><strong>○ accelY_gyro:</strong> Predicted from gyro (v × ω)</li>
-                        <li><strong>○ accelY_mag:</strong> Predicted from magnetometer heading rate</li>
-                      </ul>
-                    </div>
-
-                    <div>
-                      <strong className="text-blue-700">ROTATION RATE (rad/s):</strong>
-                      <ul className="list-disc ml-4 mt-1 space-y-1 text-[10px]">
-                        <li><strong>✓ gyroZ_real:</strong> Measured from gyroscope</li>
-                        <li><strong>○ gyroZ_accel:</strong> Predicted from accel (a/v)</li>
-                        <li><strong>○ gyroZ_mag:</strong> Predicted from heading change</li>
-                      </ul>
-                    </div>
-
-                    <div>
-                      <strong className="text-purple-700">HEADING (degrees):</strong>
-                      <ul className="list-disc ml-4 mt-1 space-y-1 text-[10px]">
-                        <li><strong>✓ heading_real:</strong> Measured from magnetometer</li>
-                        <li><strong>○ heading_accel:</strong> Integrated from accel</li>
-                        <li><strong>○ heading_gyro:</strong> Integrated from gyro</li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 p-2 bg-yellow-50 border border-yellow-300 rounded text-[10px]">
-                    <strong>💡 Key Concept:</strong> Each sensor is verified by the other two.
-                    During turns (datapoints 2800-3400), all three lateral accel signals should converge!
-                    <strong className="text-red-600"> If they don&apos;t agree, there&apos;s a sensor/calibration problem.</strong>
-                    This approach validates sensor health through physics-based cross-checks.
-                  </div>
                 </div>
 
                 {/* Signal Controls Panel - Readable Size with Tall Scroll Box */}
