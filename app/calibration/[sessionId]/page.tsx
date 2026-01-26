@@ -2022,10 +2022,10 @@ export default function CalibrationAnalysisPage() {
             </div>
             <div className="flex gap-3">
               <button
-                onClick={() => router.push(`/sessions/${sessionId}`)}
+                onClick={() => router.push('/sessions')}
                 className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
               >
-                Back to Session
+                Back to Sessions
               </button>
               {isAdmin && (
                 <button

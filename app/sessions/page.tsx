@@ -207,18 +207,6 @@ export default function SessionsPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex gap-3">
                           <button
-                            onClick={() => router.push(`/sessions/${session.id}`)}
-                            className="text-blue-600 hover:text-blue-900"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => router.push(`/analysis/${session.id}`)}
-                            className="text-purple-600 hover:text-purple-900"
-                          >
-                            📊 Analyze
-                          </button>
-                          <button
                             onClick={() => router.push(`/calibration/${session.id}`)}
                             className="text-indigo-600 hover:text-indigo-900"
                           >

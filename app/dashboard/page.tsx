@@ -375,17 +375,6 @@ export default function DashboardPage() {
             <MagnetometerChart data={magHistory.slice(-50)} />
           </div>
         )}
-
-        {/* Info */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
-          <h2 className="text-xl font-bold mb-4">Requirements</h2>
-          <ul className="list-disc list-inside space-y-2 text-gray-700">
-            <li>HTTPS connection required (✅ Enabled)</li>
-            <li>Mobile device with accelerometer and gyroscope</li>
-            <li>Grant sensor permissions when prompted</li>
-            <li>Keep screen on during recording for best results</li>
-          </ul>
-        </div>
       </div>
     </div>
   );
