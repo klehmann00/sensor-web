@@ -2297,6 +2297,21 @@ export default function CalibrationAnalysisPage() {
                     </button>
                   </div>
 
+                  {/* Export Settings */}
+                  <button
+                    onClick={() => {
+                      const exported = JSON.stringify(signalControls, null, 2);
+                      console.log('=== SIGNAL CONTROLS EXPORT ===');
+                      console.log(exported);
+                      console.log('=== Copy the above to update defaults ===');
+                      navigator.clipboard.writeText(exported);
+                      alert('Signal settings copied to clipboard and logged to console!');
+                    }}
+                    className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-semibold"
+                  >
+                    📋 Export
+                  </button>
+
                   {/* Accel Filter */}
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">Accel Filter:</span>
