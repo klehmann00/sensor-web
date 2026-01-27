@@ -89,6 +89,7 @@ interface CalibrationResult {
   transformed: Vector3D[];
   gravityHistory: Vector3D[];
   forwardHistory: Vector3D[];
+  forwardChangeRate: number[];  // How much forward vector changes per sample
   confidence: number[];
   gpsAccelDetected: boolean[];
   turningDetected: boolean[];
@@ -179,6 +180,7 @@ function applyFloatingCalibration(
     transformed: [],
     gravityHistory: [],
     forwardHistory: [],
+    forwardChangeRate: [],
     confidence: [],
     gpsAccelDetected: [],
     turningDetected: [],
@@ -219,6 +221,7 @@ function applyFloatingCalibration(
   // State variables
   let gravity = { x: 0, y: 0, z: 0 };
   let forward = { x: 0, y: 0, z: 0 };
+  let prevForward = { x: 0, y: 0, z: 0 };
   let prevSpeed = 0;
   let prevHeading = 0;
   let totalForwardUpdates = 0;
@@ -569,16 +572,35 @@ function applyFloatingCalibration(
     result.heading_fromAccel.push(heading_fromAccel * 180 / Math.PI);
     result.heading_fromGyro.push(heading_fromGyro * 180 / Math.PI);
 
-    // === STEP 4: FORWARD DIRECTION LEARNING (Simplified) ===
+    // === STEP 4: FORWARD DIRECTION LEARNING (Normalized) ===
     // Use GPS-based acceleration for forward learning
     const significantAccel = Math.abs(virtualForwardAccel) > 0.2; // m/s²
 
     if (significantAccel) {
+      // Accumulate the linear acceleration direction
       forward.x = alpha * forward.x + (1 - alpha) * linearAccel.x;
       forward.y = alpha * forward.y + (1 - alpha) * linearAccel.y;
       forward.z = alpha * forward.z + (1 - alpha) * linearAccel.z;
+
+      // Normalize to keep it as a unit direction vector
+      const forwardMag = Math.sqrt(forward.x**2 + forward.y**2 + forward.z**2);
+      if (forwardMag > 0.01) {
+        forward.x /= forwardMag;
+        forward.y /= forwardMag;
+        forward.z /= forwardMag;
+      }
+
       totalForwardUpdates++;
     }
+
+    // Calculate how much the forward vector changed (convergence metric)
+    const forwardChange = Math.sqrt(
+      (forward.x - prevForward.x)**2 +
+      (forward.y - prevForward.y)**2 +
+      (forward.z - prevForward.z)**2
+    );
+    result.forwardChangeRate.push(forwardChange);
+    prevForward = { x: forward.x, y: forward.y, z: forward.z };
 
     // === STEP 5: ORTHOGONALIZE FUSED FORWARD ===
     const gravityMag = Math.sqrt(gravity.x**2 + gravity.y**2 + gravity.z**2);
@@ -777,6 +799,11 @@ export default function CalibrationAnalysisPage() {
     heading_accel: { visible: false, offset: 0, color: '#a855f7', width: 2, label: 'heading_fromAccel' },
     heading_gyro: { visible: false, offset: 0, color: '#c084fc', width: 2, label: 'heading_fromGyro' },
 
+    // Forward vector (learned direction in phone coordinates)
+    forwardX: { visible: true, offset: 0, color: '#a855f7', width: 2, label: 'forward_X (phone)' },
+    forwardY: { visible: true, offset: 0, color: '#ec4899', width: 2, label: 'forward_Y (phone)' },
+    forwardZ: { visible: true, offset: 0, color: '#06b6d4', width: 2, label: 'forward_Z (phone)' },
+
     // Transformed (primes) - MAIN SIGNALS (OUTPUT)
     xPrime: { visible: true, offset: 0, color: '#dc2626', width: 3 },
     yPrime: { visible: false, offset: 0, color: '#2563eb', width: 3 },
@@ -788,6 +815,8 @@ export default function CalibrationAnalysisPage() {
     rawGPSAccel: { visible: true, offset: 0, color: '#ef4444', width: 2, label: 'gpsAccelAvg' },
     gpsDeltaTime: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'gpsDeltaTime (sec)' },
     gpsTimestamp: { visible: false, offset: 0, color: '#facc15', width: 2, yAxisID: 'y1', label: 'gpsTimestamp (sec)' },
+    forwardLearning: { visible: true, offset: 0, color: '#10b981', width: 3, label: 'Forward Learning (1=ON)' },
+    forwardConvergence: { visible: true, offset: 0, color: '#f59e0b', width: 3, label: 'Forward Convergence (→0)' },
 
     // GPS Speed (right axis)
     gpsSpeedRaw: { visible: true, offset: 0, color: '#a855f7', width: 4, yAxisID: 'y1', label: 'gpsSpeedRaw (1Hz steps)' },
@@ -858,6 +887,9 @@ export default function CalibrationAnalysisPage() {
   useEffect(() => {
     const savedFilterAlpha = localStorage.getItem('masterSignalViewerFilterAlpha');
     const savedWindowSize = localStorage.getItem('masterSignalViewerWindowSize');
+    const savedAlpha = localStorage.getItem('masterSignalViewerAlpha');
+    const savedObserverAlpha = localStorage.getItem('masterSignalViewerObserverAlpha');
+    const savedOrientationAlpha = localStorage.getItem('masterSignalViewerOrientationAlpha');
 
     if (savedFilterAlpha) {
       try {
@@ -874,16 +906,57 @@ export default function CalibrationAnalysisPage() {
         console.error('Failed to load saved window size:', e);
       }
     }
+
+    if (savedAlpha) {
+      try {
+        setAlpha(parseFloat(savedAlpha));
+      } catch (e) {
+        console.error('Failed to load saved alpha:', e);
+      }
+    }
+
+    if (savedObserverAlpha) {
+      try {
+        setObserverAlpha(parseFloat(savedObserverAlpha));
+      } catch (e) {
+        console.error('Failed to load saved observer alpha:', e);
+      }
+    }
+
+    if (savedOrientationAlpha) {
+      try {
+        setOrientationFilterAlpha(parseFloat(savedOrientationAlpha));
+      } catch (e) {
+        console.error('Failed to load saved orientation alpha:', e);
+      }
+    }
   }, []);
 
-  // Save filter settings to localStorage when they change
+  // Save filter settings to localStorage when they change (skip initial mount)
   useEffect(() => {
+    if (isInitialMount) return;
     localStorage.setItem('masterSignalViewerFilterAlpha', filterAlpha.toString());
-  }, [filterAlpha]);
+  }, [filterAlpha, isInitialMount]);
 
   useEffect(() => {
+    if (isInitialMount) return;
     localStorage.setItem('masterSignalViewerWindowSize', windowSize.toString());
-  }, [windowSize]);
+  }, [windowSize, isInitialMount]);
+
+  useEffect(() => {
+    if (isInitialMount) return;
+    localStorage.setItem('masterSignalViewerAlpha', alpha.toString());
+  }, [alpha, isInitialMount]);
+
+  useEffect(() => {
+    if (isInitialMount) return;
+    localStorage.setItem('masterSignalViewerObserverAlpha', observerAlpha.toString());
+  }, [observerAlpha, isInitialMount]);
+
+  useEffect(() => {
+    if (isInitialMount) return;
+    localStorage.setItem('masterSignalViewerOrientationAlpha', orientationFilterAlpha.toString());
+  }, [orientationFilterAlpha, isInitialMount]);
 
   // Fetch session detail
   useEffect(() => {
@@ -1686,6 +1759,24 @@ export default function CalibrationAnalysisPage() {
       addDataset('magZ', displayMagZ, signalControls.magZ);
     }
 
+    // Add forward vector components (the learned forward direction in phone coordinates)
+    const forwardX = calibrationResult.forwardHistory.map(f => f.x);
+    const forwardY = calibrationResult.forwardHistory.map(f => f.y);
+    const forwardZ = calibrationResult.forwardHistory.map(f => f.z);
+
+    console.log('Forward vector data check:', {
+      length: forwardX.length,
+      forwardX_range: [Math.min(...forwardX), Math.max(...forwardX)],
+      forwardY_range: [Math.min(...forwardY), Math.max(...forwardY)],
+      forwardZ_range: [Math.min(...forwardZ), Math.max(...forwardZ)],
+      final_magnitude: Math.sqrt(forwardX[forwardX.length-1]**2 + forwardY[forwardY.length-1]**2 + forwardZ[forwardZ.length-1]**2),
+      sample: forwardX.slice(0, 10)
+    });
+
+    addDataset('forwardX', forwardX, signalControls.forwardX);
+    addDataset('forwardY', forwardY, signalControls.forwardY);
+    addDataset('forwardZ', forwardZ, signalControls.forwardZ);
+
     // Add transformed (primes) - pre-calculated from calibration, NOT affected by filter slider
     const xPrimeData = calibrationResult.transformed.map(t => t.x);
     const yPrimeData = calibrationResult.transformed.map(t => t.y);
@@ -1709,6 +1800,13 @@ export default function CalibrationAnalysisPage() {
     addDataset('rawGPSAccel', calibrationResult.rawGPSAccel, signalControls.rawGPSAccel);
     addDataset('gpsDeltaTime', calibrationResult.gpsDeltaTime, signalControls.gpsDeltaTime);
     addDataset('gpsTimestamp', calibrationResult.gpsTimestamp, signalControls.gpsTimestamp);
+
+    // Add forward learning state (1 = learning, 0 = not learning)
+    const forwardLearningState = calibrationResult.gpsAccelDetected.map(detected => detected ? 1 : 0);
+    addDataset('forwardLearning', forwardLearningState, signalControls.forwardLearning);
+
+    // Add forward vector convergence (should decrease toward 0)
+    addDataset('forwardConvergence', calibrationResult.forwardChangeRate, signalControls.forwardConvergence);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
     console.log('=== TRIFECTA DEBUG ===');
@@ -2548,7 +2646,25 @@ export default function CalibrationAnalysisPage() {
                         tooltip: {
                           enabled: true,
                           mode: 'index',
-                          intersect: false
+                          intersect: false,
+                          callbacks: {
+                            label: function(context: any) {
+                              const datasetLabel = context.dataset.label || '';
+                              const value = context.parsed.y;
+
+                              // Find the signal key from the label to get the offset
+                              const signalKey = Object.keys(signalControls).find(key => {
+                                const control = signalControls[key];
+                                return (control.label || key) === datasetLabel;
+                              });
+
+                              // Subtract the offset to show the true value
+                              const offset = signalKey ? signalControls[signalKey].offset : 0;
+                              const trueValue = value - offset;
+
+                              return datasetLabel + ': ' + trueValue.toFixed(3);
+                            }
+                          }
                         }
                       }
                     }}
