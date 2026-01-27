@@ -1896,14 +1896,9 @@ export default function CalibrationAnalysisPage() {
   };
 
   const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (e.deltaY < 0) {
-      // Zoom in
-      setWindowSize(Math.max(100, windowSize - 50));
-    } else {
-      // Zoom out
-      setWindowSize(Math.min(2000, windowSize + 50));
-    }
+    // Disabled: Mouse wheel zoom interferes with trackpad scrolling
+    // User can still drag left/right to pan
+    return;
   };
 
   const toggleSignal = (key: string) => {
