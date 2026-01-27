@@ -96,6 +96,12 @@ interface CalibrationResult {
   virtualForwardAccel: number[];
   virtualLateralAccel: number[];
   actualSampleRate: number;
+  gpsSpeedRaw: number[];  // Raw 1Hz GPS speed (stepped, not interpolated)
+  gpsSpeedSmoothed: number[];  // Recursive smoothed (alpha=0.5 fixed)
+  gpsSpeedFiltered: number[];  // EMA filtered (adjustable alpha)
+  rawGPSAccel: number[];  // GPS acceleration from smoothed 1Hz data
+  gpsDeltaTime: number[];  // Time between GPS samples (for debugging)
+  gpsTimestamp: number[];  // Actual GPS timestamps (for debugging timing)
   // Linear acceleration (gravity removed, filtered with observerAlpha)
   accelLinearX_measured: number[];
   accelLinearY_measured: number[];
@@ -166,7 +172,8 @@ function applyFloatingCalibration(
   gpsData: GPSData[],
   alpha: number = 0.95,
   observerAlpha: number = 0.05,
-  filterAlpha: number = 0.05
+  filterAlpha: number = 0.05,
+  gpsSpeedAlpha: number = 0.95
 ): CalibrationResult {
   const result: CalibrationResult = {
     transformed: [],
@@ -179,6 +186,12 @@ function applyFloatingCalibration(
     virtualForwardAccel: [],
     virtualLateralAccel: [],
     actualSampleRate: 60,
+    gpsSpeedRaw: [],
+    gpsSpeedSmoothed: [],
+    gpsSpeedFiltered: [],
+    rawGPSAccel: [],
+    gpsDeltaTime: [],
+    gpsTimestamp: [],
     // Linear acceleration (gravity removed, filtered with observerAlpha)
     accelLinearX_measured: [],
     accelLinearY_measured: [],
@@ -230,14 +243,119 @@ function applyFloatingCalibration(
   const SAMPLE_RATE = 60;
   const deltaTime = 1 / SAMPLE_RATE;
 
-  // Interpolate GPS data to match accelerometer sample rate
+  // === RECURSIVE SMOOTHING (gpsSmoothed) ===
+  // gpsSmoothed[i] = gpsSmoothed[i-1] + (gpsRaw[i] - gpsSmoothed[i-1]) / 2
+  const smoothedRawGPS: GPSData[] = [];
+  let recursiveSmoothedMPS = gpsData.length > 0 ? gpsData[0].mps : 0;
+
+  for (let i = 0; i < gpsData.length; i++) {
+    if (i === 0) {
+      recursiveSmoothedMPS = gpsData[i].mps;
+    } else {
+      recursiveSmoothedMPS = recursiveSmoothedMPS + (gpsData[i].mps - recursiveSmoothedMPS) / 2;
+    }
+    smoothedRawGPS.push({
+      mph: recursiveSmoothedMPS * 2.237,
+      kph: recursiveSmoothedMPS * 3.6,
+      mps: recursiveSmoothedMPS,
+      timestamp: gpsData[i].timestamp
+    });
+  }
+
+  // === FILTER RAW GPS DATA (1 Hz) WITH EMA ===
+  // Remove GPS measurement jitter while accepting minimal lag (~1-2 samples)
+  const filteredRawGPS: GPSData[] = [];
+  let smoothedMPS = gpsData.length > 0 ? gpsData[0].mps : 0; // Initialize with first value
+
+  for (let i = 0; i < gpsData.length; i++) {
+    // Apply EMA filter at 1 Hz (controlled by Orientation slider)
+    // Higher gpsSpeedAlpha = more smoothing but more lag
+    smoothedMPS = gpsSpeedAlpha * smoothedMPS + (1 - gpsSpeedAlpha) * gpsData[i].mps;
+
+    filteredRawGPS.push({
+      mph: smoothedMPS * 2.237,
+      kph: smoothedMPS * 3.6,
+      mps: smoothedMPS,
+      timestamp: gpsData[i].timestamp
+    });
+  }
+
+  // Track GPS delta time and timestamps at 1Hz (for debugging GPS timing issues)
+  const gpsDeltaTimeArray: number[] = [];
+  const gpsTimestampArray: number[] = [];
+  for (let i = 0; i < smoothedRawGPS.length; i++) {
+    let dt = 0;
+    if (i > 0) {
+      dt = (smoothedRawGPS[i].timestamp - smoothedRawGPS[i-1].timestamp) / 1000;
+    }
+    gpsDeltaTimeArray.push(dt);
+    gpsTimestampArray.push(smoothedRawGPS[i].timestamp / 1000);  // Convert ms to seconds for readability
+  }
+
+  // Create stepped raw GPS signal (repeat each 1Hz value for ~60 samples)
+  const steppedRawGPS: number[] = [];
+  for (let i = 0; i < accelData.length; i++) {
+    const gpsIndex = Math.floor((i / accelData.length) * gpsData.length);
+    const clampedIndex = Math.min(gpsIndex, gpsData.length - 1);
+    steppedRawGPS.push(gpsData[clampedIndex].mps);
+  }
+
+  // Interpolate raw, smoothed (recursive), and filtered (EMA) GPS to 60 Hz
   const interpolatedGPS = interpolateGPSData(gpsData, accelData.length);
+  const interpolatedGPSSmoothed = interpolateGPSData(smoothedRawGPS, accelData.length);
+  const interpolatedGPSFiltered = interpolateGPSData(filteredRawGPS, accelData.length);
+
+  // Calculate GPS acceleration from 60Hz interpolated smoothed speed (much cleaner!)
+  const ACCEL_WINDOW = 30;  // Use ±30 samples at 60Hz (1.0 second total window)
+  const interpolatedRawGPSAccel: number[] = [];
+  let smoothedAccel = 0;  // Recursive smoothing for acceleration (α=0.5)
+
+  for (let i = 0; i < accelData.length; i++) {
+    let accel = 0;
+
+    if (i >= ACCEL_WINDOW && i < accelData.length - ACCEL_WINDOW) {
+      // Central difference at 60Hz - fixed dt, already smooth speed
+      const dt = (2 * ACCEL_WINDOW) / SAMPLE_RATE;  // 60 samples at 60Hz = 1.0 seconds
+      const dv = interpolatedGPSSmoothed[i + ACCEL_WINDOW].mps - interpolatedGPSSmoothed[i - ACCEL_WINDOW].mps;
+      accel = dv / dt;
+    } else if (i > 0) {
+      // Edge samples - simple backward difference
+      const dt = 1 / SAMPLE_RATE;  // 0.0167 seconds
+      const dv = interpolatedGPSSmoothed[i].mps - interpolatedGPSSmoothed[i - 1].mps;
+      accel = dv / dt;
+    }
+
+    // Clamp to physically realistic vehicle limits
+    // Max acceleration: 0.5G = 4.9 m/s², Max braking: 1.1G = 10.8 m/s²
+    accel = Math.max(-10.8, Math.min(4.9, accel));
+
+    // Apply recursive smoothing to acceleration (same as GPS speed smoothing)
+    smoothedAccel = smoothedAccel + (accel - smoothedAccel) / 2;
+
+    interpolatedRawGPSAccel.push(smoothedAccel);
+  }
+
+  // Step GPS delta time and timestamps to 60 Hz (show actual 1Hz timing, no interpolation)
+  const interpolatedGPSDeltaTime: number[] = [];
+  const interpolatedGPSTimestamp: number[] = [];
+  for (let i = 0; i < accelData.length; i++) {
+    const gpsIndex = Math.floor((i / accelData.length) * gpsDeltaTimeArray.length);
+    const clampedIndex = Math.min(gpsIndex, gpsDeltaTimeArray.length - 1);
+    interpolatedGPSDeltaTime.push(gpsDeltaTimeArray[clampedIndex]);
+    interpolatedGPSTimestamp.push(gpsTimestampArray[clampedIndex]);
+  }
 
   // Main processing loop
   for (let i = 0; i < accelData.length; i++) {
     const accel = accelData[i];
     const gyro = gyroData[i] || { x: 0, y: 0, z: 0 };
     const gps = interpolatedGPS[i];
+
+    // Store both smoothed and filtered GPS speeds
+    const gpsSmoothed = interpolatedGPSSmoothed[i];
+    const gpsFiltered = interpolatedGPSFiltered[i];
+    result.gpsSpeedSmoothed.push(gpsSmoothed.mps);
+    result.gpsSpeedFiltered.push(gpsFiltered.mps);
 
     // === STEP 0: FILTER RAW ACCEL (for clean gravity estimation using alpha) ===
     accelFilteredX = alpha * accelFilteredX + (1 - alpha) * accel.x;
@@ -290,7 +408,22 @@ function applyFloatingCalibration(
 
     // === STEP 2: CALCULATE VIRTUAL ACCELERATIONS ===
     const currentSpeed = gps.mps;
-    const virtualForwardAccel = (currentSpeed - prevSpeed) / deltaTime;
+
+    // Calculate acceleration using longer time window (±5 samples = 10 samples total)
+    // This reduces noise from numerical differentiation
+    const windowSize = 5;
+    let virtualForwardAccel = 0;
+
+    if (i >= windowSize && i < accelData.length - windowSize) {
+      // Central difference: (speed[i+5] - speed[i-5]) / (10 * deltaTime)
+      const futureSpeed = interpolatedGPS[i + windowSize].mps;
+      const pastSpeed = interpolatedGPS[i - windowSize].mps;
+      virtualForwardAccel = (futureSpeed - pastSpeed) / (2 * windowSize * deltaTime);
+    } else {
+      // Fallback to simple difference at edges
+      virtualForwardAccel = (currentSpeed - prevSpeed) / deltaTime;
+    }
+
     prevSpeed = currentSpeed;
 
     const rotationRate = gyro.z;
@@ -298,6 +431,10 @@ function applyFloatingCalibration(
 
     result.virtualForwardAccel.push(virtualForwardAccel);
     result.virtualLateralAccel.push(virtualLateralAccel);
+    result.gpsSpeedRaw.push(steppedRawGPS[i]);
+    result.rawGPSAccel.push(interpolatedRawGPSAccel[i]);
+    result.gpsDeltaTime.push(interpolatedGPSDeltaTime[i]);
+    result.gpsTimestamp.push(interpolatedGPSTimestamp[i]);
 
     // === STEP 3: CROSS-VERIFICATION TRIFECTA (using FILTERED signals) ===
     // Each sensor verified by the other two
@@ -646,11 +783,17 @@ export default function CalibrationAnalysisPage() {
     zPrime: { visible: false, offset: 0, color: '#16a34a', width: 3 },
 
     // Virtual accelerations
-    virtualForward: { visible: true, offset: 0, color: '#10b981', width: 2 },
+    virtualForward: { visible: false, offset: 0, color: '#10b981', width: 2 },
     virtualLateral: { visible: false, offset: 0, color: '#f59e0b', width: 2 },
+    rawGPSAccel: { visible: true, offset: 0, color: '#ef4444', width: 2, label: 'gpsAccelAvg' },
+    gpsDeltaTime: { visible: true, offset: 0, color: '#f97316', width: 2, label: 'gpsDeltaTime (sec)' },
+    gpsTimestamp: { visible: false, offset: 0, color: '#facc15', width: 2, yAxisID: 'y1', label: 'gpsTimestamp (sec)' },
 
     // GPS Speed (right axis)
-    gpsSpeed: { visible: true, offset: 0, color: '#8b5cf6', width: 2, yAxisID: 'y1' },
+    gpsSpeedRaw: { visible: true, offset: 0, color: '#a855f7', width: 4, yAxisID: 'y1', label: 'gpsSpeedRaw (1Hz steps)' },
+    gpsSpeed: { visible: false, offset: 0, color: '#8b5cf6', width: 2, yAxisID: 'y1', label: 'gpsSpeed (interpolated)' },
+    gpsSpeedSmoothed: { visible: true, offset: 0, color: '#22c55e', width: 3, yAxisID: 'y1', label: 'gpsSpeedSmoothed (recursive α=0.5)' },
+    gpsSpeedFiltered: { visible: false, offset: 0, color: '#06b6d4', width: 3, yAxisID: 'y1', label: 'gpsSpeedFiltered (EMA)' },
 
     // Confidence
     confidence: { visible: false, offset: 0, color: '#ec4899', width: 1, yAxisID: 'y1' }
@@ -674,7 +817,7 @@ export default function CalibrationAnalysisPage() {
   // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
     console.log('🚀 LOAD EFFECT RUNNING - This should appear on mount!');
-    const STORAGE_VERSION = 3; // Increment this when labels/structure changes (added accelLinearX/Z)
+    const STORAGE_VERSION = 4; // GPS signal cleanup: added gpsSpeedSmoothed, renamed rawGPSAccel→gpsAccelAvg, hid gpsSpeed/virtualForward/gpsSpeedFiltered
     const savedControls = localStorage.getItem('masterSignalViewerControls');
     const savedVersion = localStorage.getItem('masterSignalViewerVersion');
 
@@ -792,9 +935,10 @@ export default function CalibrationAnalysisPage() {
       session.gpsData || [],
       alpha,
       observerAlpha,
-      filterAlpha
+      filterAlpha,
+      orientationFilterAlpha
     );
-  }, [session, alpha, observerAlpha, filterAlpha]);
+  }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha]);
 
   // Data slicing logic
   const getSlicedData = (data: Vector3D[]) => {
@@ -1562,6 +1706,9 @@ export default function CalibrationAnalysisPage() {
     // Add virtual accelerations
     addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);
     addDataset('virtualLateral', calibrationResult.virtualLateralAccel, signalControls.virtualLateral);
+    addDataset('rawGPSAccel', calibrationResult.rawGPSAccel, signalControls.rawGPSAccel);
+    addDataset('gpsDeltaTime', calibrationResult.gpsDeltaTime, signalControls.gpsDeltaTime);
+    addDataset('gpsTimestamp', calibrationResult.gpsTimestamp, signalControls.gpsTimestamp);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
     console.log('=== TRIFECTA DEBUG ===');
@@ -1704,7 +1851,19 @@ export default function CalibrationAnalysisPage() {
     }
 
     // NOW slice it like all other signals
+    // Add raw stepped GPS (1 Hz)
+    const gpsSpeedRawMPH = calibrationResult.gpsSpeedRaw.map(mps => mps * 2.237);
+    addDataset('gpsSpeedRaw', gpsSpeedRawMPH, signalControls.gpsSpeedRaw);
+
     addDataset('gpsSpeed', interpolatedGPSSpeed, signalControls.gpsSpeed);
+
+    // Add smoothed GPS speed (recursive, alpha=0.5 fixed)
+    const gpsSpeedSmoothedMPH = calibrationResult.gpsSpeedSmoothed.map(mps => mps * 2.237);
+    addDataset('gpsSpeedSmoothed', gpsSpeedSmoothedMPH, signalControls.gpsSpeedSmoothed);
+
+    // Add filtered GPS speed (convert m/s to mph for display)
+    const gpsSpeedFilteredMPH = calibrationResult.gpsSpeedFiltered.map(mps => mps * 2.237);
+    addDataset('gpsSpeedFiltered', gpsSpeedFilteredMPH, signalControls.gpsSpeedFiltered);
 
     // Add confidence
     const confidencePercent = calibrationResult.confidence.map(c => c * 100);
