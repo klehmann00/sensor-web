@@ -97,6 +97,11 @@ interface CalibrationResult {
   virtualForwardAccel: number[];
   virtualLateralAccel: number[];
   actualSampleRate: number;
+  // Stability detection signals
+  phoneStable: boolean[];       // Phone is not moving/rotating
+  vehicleStationary: boolean[]; // Vehicle not accelerating (constant speed or stopped)
+  vehicleMoving: boolean[];     // Vehicle has speed > 1 m/s
+  magHeading: number[];         // Magnetometer heading in degrees
   gpsSpeedRaw: number[];  // Raw 1Hz GPS speed (stepped, not interpolated)
   gpsSpeedSmoothed: number[];  // Recursive smoothed (alpha=0.5 fixed)
   gpsSpeedFiltered: number[];  // EMA filtered (adjustable alpha)
@@ -170,6 +175,7 @@ function interpolateGPSData(gpsData: GPSData[], targetLength: number): GPSData[]
 function applyFloatingCalibration(
   accelData: Vector3D[],
   gyroData: Vector3D[],
+  magData: Vector3D[],
   gpsData: GPSData[],
   alpha: number = 0.95,
   observerAlpha: number = 0.05,
@@ -188,6 +194,10 @@ function applyFloatingCalibration(
     virtualForwardAccel: [],
     virtualLateralAccel: [],
     actualSampleRate: 60,
+    phoneStable: [],
+    vehicleStationary: [],
+    vehicleMoving: [],
+    magHeading: [],
     gpsSpeedRaw: [],
     gpsSpeedSmoothed: [],
     gpsSpeedFiltered: [],
@@ -218,13 +228,12 @@ function applyFloatingCalibration(
   };
 
   // State variables
-  // State variables
   let gravity = { x: 0, y: 0, z: 0 };
   let forward = { x: 0, y: 0, z: 0 };
   let prevForward = { x: 0, y: 0, z: 0 };
-  let prevSpeed = 0;
   let prevHeading = 0;
   let totalForwardUpdates = 0;
+  let magHeadingUnwrapped = 0;  // Unwrapped heading (no 360° jumps)
 
   // Cross-verification trifecta state
   let integratedHeading_accel = 0;
@@ -409,25 +418,11 @@ function applyFloatingCalibration(
     filteredGyroY = observerAlpha * gyro.y + (1 - observerAlpha) * filteredGyroY;
     filteredGyroZ = observerAlpha * gyro.z + (1 - observerAlpha) * filteredGyroZ;
 
-    // === STEP 2: CALCULATE VIRTUAL ACCELERATIONS ===
+    // === STEP 2: USE CLEAN GPS ACCELERATION ===
+    // Use the pre-calculated clean GPS acceleration instead of recalculating
+    // This avoids noise from numerical differentiation on interpolated GPS
     const currentSpeed = gps.mps;
-
-    // Calculate acceleration using longer time window (±5 samples = 10 samples total)
-    // This reduces noise from numerical differentiation
-    const windowSize = 5;
-    let virtualForwardAccel = 0;
-
-    if (i >= windowSize && i < accelData.length - windowSize) {
-      // Central difference: (speed[i+5] - speed[i-5]) / (10 * deltaTime)
-      const futureSpeed = interpolatedGPS[i + windowSize].mps;
-      const pastSpeed = interpolatedGPS[i - windowSize].mps;
-      virtualForwardAccel = (futureSpeed - pastSpeed) / (2 * windowSize * deltaTime);
-    } else {
-      // Fallback to simple difference at edges
-      virtualForwardAccel = (currentSpeed - prevSpeed) / deltaTime;
-    }
-
-    prevSpeed = currentSpeed;
+    const virtualForwardAccel = interpolatedRawGPSAccel[i];
 
     const rotationRate = gyro.z;
     const virtualLateralAccel = currentSpeed * rotationRate;
@@ -571,6 +566,47 @@ function applyFloatingCalibration(
     result.heading_measured.push(heading_measured * 180 / Math.PI); // Convert to degrees
     result.heading_fromAccel.push(heading_fromAccel * 180 / Math.PI);
     result.heading_fromGyro.push(heading_fromGyro * 180 / Math.PI);
+
+    // === MAGNETOMETER HEADING ===
+    // Get magnetometer sample (interpolate if lengths don't match)
+    const magIndex = Math.min(i, magData.length - 1);
+    const magSample = magData[magIndex] || { x: 0, y: 0, z: 0 };
+
+    // Calculate compass heading from magnetometer (atan2 of horizontal components)
+    const magHeadingRad = Math.atan2(magSample.y, magSample.x);
+    const magHeadingDeg = magHeadingRad * 180 / Math.PI; // Convert to degrees (-180 to +180)
+
+    // Unwrap heading to remove 360° jumps (maintain continuity)
+    if (i === 0) {
+      magHeadingUnwrapped = magHeadingDeg;
+    } else {
+      const diff = magHeadingDeg - magHeadingUnwrapped;
+      // Detect wraparound and adjust
+      if (diff > 180) {
+        magHeadingUnwrapped = magHeadingDeg - 360;
+      } else if (diff < -180) {
+        magHeadingUnwrapped = magHeadingDeg + 360;
+      } else {
+        magHeadingUnwrapped = magHeadingDeg;
+      }
+    }
+
+    // Store scaled for display (divide by 10: 360° → 36)
+    result.magHeading.push(magHeadingUnwrapped / 10);
+
+    // === STABILITY DETECTION ===
+    // Check if phone is stable (not moving/rotating significantly)
+    const accelMag = Math.sqrt(accel.x**2 + accel.y**2 + accel.z**2);
+    const gyroMagnitude = Math.sqrt(gyroFilteredX**2 + gyroFilteredY**2 + gyroFilteredZ**2); // Use filtered gyro
+    const phoneStable = Math.abs(accelMag - 9.8) < 1.5 && gyroMagnitude < 0.3; // Low movement
+
+    // Check vehicle state
+    const vehicleStationary = Math.abs(virtualForwardAccel) < 0.1; // Not accelerating/braking
+    const vehicleMoving = currentSpeed > 1.0; // Has speed > 1 m/s (~2.2 mph)
+
+    result.phoneStable.push(phoneStable);
+    result.vehicleStationary.push(vehicleStationary);
+    result.vehicleMoving.push(vehicleMoving);
 
     // === STEP 4: FORWARD DIRECTION LEARNING (Normalized) ===
     // Use GPS-based acceleration for forward learning
@@ -799,6 +835,11 @@ export default function CalibrationAnalysisPage() {
     heading_accel: { visible: false, offset: 0, color: '#a855f7', width: 2, label: 'heading_fromAccel' },
     heading_gyro: { visible: false, offset: 0, color: '#c084fc', width: 2, label: 'heading_fromGyro' },
 
+    // Gravity estimation (should be ~9.8 m/s² pointing down)
+    gravityX: { visible: true, offset: 0, color: '#86198f', width: 2, label: 'gravity_X' },
+    gravityY: { visible: true, offset: 0, color: '#be123c', width: 2, label: 'gravity_Y' },
+    gravityZ: { visible: true, offset: 0, color: '#0e7490', width: 2, label: 'gravity_Z' },
+
     // Forward vector (learned direction in phone coordinates)
     forwardX: { visible: true, offset: 0, color: '#a855f7', width: 2, label: 'forward_X (phone)' },
     forwardY: { visible: true, offset: 0, color: '#ec4899', width: 2, label: 'forward_Y (phone)' },
@@ -817,6 +858,12 @@ export default function CalibrationAnalysisPage() {
     gpsTimestamp: { visible: false, offset: 0, color: '#facc15', width: 2, yAxisID: 'y1', label: 'gpsTimestamp (sec)' },
     forwardLearning: { visible: true, offset: 0, color: '#10b981', width: 3, label: 'Forward Learning (1=ON)' },
     forwardConvergence: { visible: true, offset: 0, color: '#f59e0b', width: 3, label: 'Forward Convergence (→0)' },
+
+    // Stability detection
+    phoneStable: { visible: true, offset: 0, color: '#06b6d4', width: 3, label: 'Phone Stable (1=stable)' },
+    vehicleStationary: { visible: true, offset: 0, color: '#8b5cf6', width: 3, label: 'Vehicle Stationary (1=no accel)' },
+    vehicleMoving: { visible: true, offset: 0, color: '#ec4899', width: 3, label: 'Vehicle Moving (1=has speed)' },
+    magHeading: { visible: true, offset: 0, color: '#f59e0b', width: 2, label: 'Mag Heading (degrees)' },
 
     // GPS Speed (right axis)
     gpsSpeedRaw: { visible: true, offset: 0, color: '#a855f7', width: 4, yAxisID: 'y1', label: 'gpsSpeedRaw (1Hz steps)' },
@@ -1005,6 +1052,7 @@ export default function CalibrationAnalysisPage() {
     return applyFloatingCalibration(
       session.accelerometerData,
       session.gyroscopeData,
+      session.magnetometerData || [],
       session.gpsData || [],
       alpha,
       observerAlpha,
@@ -1759,6 +1807,23 @@ export default function CalibrationAnalysisPage() {
       addDataset('magZ', displayMagZ, signalControls.magZ);
     }
 
+    // Add gravity estimation components (should converge to ~9.8 m/s²)
+    const gravityX = calibrationResult.gravityHistory.map(g => g.x);
+    const gravityY = calibrationResult.gravityHistory.map(g => g.y);
+    const gravityZ = calibrationResult.gravityHistory.map(g => g.z);
+
+    console.log('Gravity vector data check:', {
+      length: gravityX.length,
+      gravityX_range: [Math.min(...gravityX), Math.max(...gravityX)],
+      gravityY_range: [Math.min(...gravityY), Math.max(...gravityY)],
+      gravityZ_range: [Math.min(...gravityZ), Math.max(...gravityZ)],
+      final_magnitude: Math.sqrt(gravityX[gravityX.length-1]**2 + gravityY[gravityY.length-1]**2 + gravityZ[gravityZ.length-1]**2)
+    });
+
+    addDataset('gravityX', gravityX, signalControls.gravityX);
+    addDataset('gravityY', gravityY, signalControls.gravityY);
+    addDataset('gravityZ', gravityZ, signalControls.gravityZ);
+
     // Add forward vector components (the learned forward direction in phone coordinates)
     const forwardX = calibrationResult.forwardHistory.map(f => f.x);
     const forwardY = calibrationResult.forwardHistory.map(f => f.y);
@@ -1801,12 +1866,23 @@ export default function CalibrationAnalysisPage() {
     addDataset('gpsDeltaTime', calibrationResult.gpsDeltaTime, signalControls.gpsDeltaTime);
     addDataset('gpsTimestamp', calibrationResult.gpsTimestamp, signalControls.gpsTimestamp);
 
-    // Add forward learning state (1 = learning, 0 = not learning)
-    const forwardLearningState = calibrationResult.gpsAccelDetected.map(detected => detected ? 1 : 0);
+    // Add forward learning state (0.5 = learning, 0 = not learning)
+    const forwardLearningState = calibrationResult.gpsAccelDetected.map(detected => detected ? 0.5 : 0);
     addDataset('forwardLearning', forwardLearningState, signalControls.forwardLearning);
 
     // Add forward vector convergence (should decrease toward 0)
     addDataset('forwardConvergence', calibrationResult.forwardChangeRate, signalControls.forwardConvergence);
+
+    // Add stability detection signals (convert boolean to 0.5/0 for compact display)
+    const phoneStableSignal = calibrationResult.phoneStable.map(s => s ? 0.5 : 0);
+    const vehicleStationarySignal = calibrationResult.vehicleStationary.map(s => s ? 0.5 : 0);
+    const vehicleMovingSignal = calibrationResult.vehicleMoving.map(s => s ? 0.5 : 0);
+    addDataset('phoneStable', phoneStableSignal, signalControls.phoneStable);
+    addDataset('vehicleStationary', vehicleStationarySignal, signalControls.vehicleStationary);
+    addDataset('vehicleMoving', vehicleMovingSignal, signalControls.vehicleMoving);
+
+    // Add magnetometer heading
+    addDataset('magHeading', calibrationResult.magHeading, signalControls.magHeading);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
     console.log('=== TRIFECTA DEBUG ===');
