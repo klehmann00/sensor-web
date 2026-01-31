@@ -595,6 +595,15 @@ function applyFloatingCalibration(
     }
 
     // Store scaled for display (divide by 10: 360° → 36)
+    // Debug: Log first few samples to verify values
+    if (i < 5 || i === magData.length - 1) {
+      console.log(`magHeading LOOP [i=${i}]:`, {
+        'magSample.x': magSample.x.toFixed(1),
+        'magHeadingDeg': magHeadingDeg.toFixed(1),
+        'magHeadingUnwrapped': magHeadingUnwrapped.toFixed(1),
+        'stored (÷10)': (magHeadingUnwrapped / 10).toFixed(2)
+      });
+    }
     result.magHeading.push(magHeadingUnwrapped / 10);
 
     // === STABILITY DETECTION ===
@@ -1885,6 +1894,12 @@ export default function CalibrationAnalysisPage() {
     addDataset('vehicleMoving', vehicleMovingSignal, signalControls.vehicleMoving);
 
     // Add magnetometer heading
+    console.log('magHeading DEBUG:', {
+      first5: calibrationResult.magHeading.slice(0, 5),
+      last5: calibrationResult.magHeading.slice(-5),
+      min: Math.min(...calibrationResult.magHeading),
+      max: Math.max(...calibrationResult.magHeading),
+    });
     addDataset('magHeading', calibrationResult.magHeading, signalControls.magHeading);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
