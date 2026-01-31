@@ -162,6 +162,20 @@ export const useSensors = () => {
         z: event.gamma || 0,   // Left-to-right tilt (-90 to 90°)
       };
 
+      // Debug: Log compass heading every 60 samples (~1 second)
+      if (!(window as any).__compassSampleCount) {
+        (window as any).__compassSampleCount = 0;
+      }
+      (window as any).__compassSampleCount++;
+      if ((window as any).__compassSampleCount % 60 === 0) {
+        console.log('COMPASS DEBUG:', {
+          webkitCompassHeading: (event as any).webkitCompassHeading,
+          eventAlpha: event.alpha,
+          savedHeading: compassHeading,
+          absolute: event.absolute
+        });
+      }
+
       setSensorData(prev => ({
         ...prev,
         magnetometer: magnetometerData

@@ -569,26 +569,29 @@ function applyFloatingCalibration(
 
     // === MAGNETOMETER HEADING ===
     // Get magnetometer sample (interpolate if lengths don't match)
+    // Note: magSample.x IS the compass heading (0-360°) from webkitCompassHeading (iOS)
+    // or event.alpha (other browsers) - no calculation needed!
     const magIndex = Math.min(i, magData.length - 1);
     const magSample = magData[magIndex] || { x: 0, y: 0, z: 0 };
 
-    // Calculate compass heading from magnetometer (atan2 of horizontal components)
-    const magHeadingRad = Math.atan2(magSample.y, magSample.x);
-    const magHeadingDeg = magHeadingRad * 180 / Math.PI; // Convert to degrees (-180 to +180)
+    // magSample.x is already the compass heading in degrees (0-360° from magnetic north)
+    const magHeadingDeg = magSample.x;
 
     // Unwrap heading to remove 360° jumps (maintain continuity)
+    // Track cumulative offset to handle multiple wraparounds
     if (i === 0) {
       magHeadingUnwrapped = magHeadingDeg;
+      prevHeading = magHeadingDeg;
     } else {
-      const diff = magHeadingDeg - magHeadingUnwrapped;
-      // Detect wraparound and adjust
+      let diff = magHeadingDeg - prevHeading;
+      // Detect wraparound and adjust cumulative offset
       if (diff > 180) {
-        magHeadingUnwrapped = magHeadingDeg - 360;
+        diff -= 360;  // Wrapped from 359° to 0°, going clockwise
       } else if (diff < -180) {
-        magHeadingUnwrapped = magHeadingDeg + 360;
-      } else {
-        magHeadingUnwrapped = magHeadingDeg;
+        diff += 360;  // Wrapped from 0° to 359°, going counter-clockwise
       }
+      magHeadingUnwrapped += diff;
+      prevHeading = magHeadingDeg;
     }
 
     // Store scaled for display (divide by 10: 360° → 36)
