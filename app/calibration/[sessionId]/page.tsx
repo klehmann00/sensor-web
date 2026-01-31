@@ -2089,31 +2089,66 @@ export default function CalibrationAnalysisPage() {
     }));
   };
 
-  // Custom plugin to draw signal labels at the end of each line
-  const lineLabelsPlugin = {
-    id: 'lineLabels',
-    afterDatasetsDraw(chart: any) {
-      const { ctx, tooltip } = chart;
-      
-      // Only draw labels if tooltip is active (user is hovering)
+  // Custom plugin to draw vertical crosshair and floating labels above datapoints
+  const crosshairLabelsPlugin = {
+    id: 'crosshairLabels',
+    afterDraw(chart: any) {
+      const { ctx, tooltip, chartArea, scales } = chart;
+
+      // Only draw if tooltip is active (user is hovering)
       if (!tooltip || !tooltip._active || tooltip._active.length === 0) return;
-      
-      // Draw label for each active point at the hover position
+
+      const x = tooltip._active[0].element.x;
+
+      ctx.save();
+
+      // Draw vertical crosshair line
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw label box above each datapoint
       tooltip._active.forEach((activePoint: any) => {
         const dataset = chart.data.datasets[activePoint.datasetIndex];
         const meta = chart.getDatasetMeta(activePoint.datasetIndex);
         if (!meta.visible) return;
-        
+
         const point = meta.data[activePoint.index];
-        
-        ctx.save();
+        const value = dataset.data[activePoint.index];
+
+        // Get signal key to find offset
+        const datasetLabel = dataset.label || '';
+        const signalKey = Object.keys(signalControls).find(key => {
+          const control = signalControls[key];
+          return (control.label || key) === datasetLabel;
+        });
+
+        // Subtract offset to show true value
+        const offset = signalKey ? signalControls[signalKey].offset : 0;
+        const trueValue = value - offset;
+
+        const labelText = `${datasetLabel}: ${trueValue.toFixed(3)}`;
+
+        // Measure text
+        ctx.font = 'bold 11px Arial';
+        const textWidth = ctx.measureText(labelText).width;
+
+        // Position above the datapoint
+        const labelY = point.y - 20;
+
+        // Draw text with no background or border
         ctx.fillStyle = dataset.borderColor;
-        ctx.font = 'bold 10px Arial';
-        ctx.textAlign = 'left';
-        // Position label to the right of the point
-        ctx.fillText(dataset.label || '', point.x + 10, point.y);
-        ctx.restore();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelText, point.x, labelY);
       });
+
+      ctx.restore();
     }
   };
 
@@ -2630,7 +2665,7 @@ export default function CalibrationAnalysisPage() {
                 >
                   <Line
                     data={masterSignalViewerData}
-                    plugins={[lineLabelsPlugin]}
+                    plugins={[crosshairLabelsPlugin]}
                     options={{
                       responsive: true,
                       maintainAspectRatio: false,
@@ -2720,7 +2755,7 @@ export default function CalibrationAnalysisPage() {
                           }
                         },
                         tooltip: {
-                          enabled: true,
+                          enabled: false,  // Disable default tooltip
                           mode: 'index',
                           intersect: false,
                           callbacks: {
