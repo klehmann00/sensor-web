@@ -131,21 +131,27 @@ export const useSensors = () => {
 
         // Debug once: Confirm we're using iOS absolute compass
         if (!(window as any).__compassDebugLogged) {
-          console.log('✅ COMPASS: Using iOS webkitCompassHeading (absolute from magnetic north)');
+          const msg = '✅ COMPASS: Using iOS webkitCompassHeading (absolute from magnetic north)';
+          console.log(msg);
+          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }
       // Android/Other: Warn if not absolute
       else if (event.absolute === false) {
         if (!(window as any).__compassDebugLogged) {
-          console.warn('⚠️ COMPASS: Relative orientation (NOT compass-referenced). Heading is relative to starting direction.');
+          const msg = '⚠️ COMPASS: Relative orientation (NOT compass-referenced). Heading is relative to starting direction.';
+          console.warn(msg);
+          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }
       // Using alpha with absolute=true
       else {
         if (!(window as any).__compassDebugLogged) {
-          console.log('✅ COMPASS: Using event.alpha with absolute=true (compass-referenced)');
+          const msg = '✅ COMPASS: Using event.alpha with absolute=true (compass-referenced)';
+          console.log(msg);
+          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }
