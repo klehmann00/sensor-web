@@ -120,10 +120,40 @@ export const useSensors = () => {
 
     // Handle device orientation (magnetometer/compass)
     const handleOrientation = (event: DeviceOrientationEvent) => {
+      // Get absolute compass heading
+      // iOS Safari provides webkitCompassHeading (0-360° from magnetic north)
+      // Other browsers: event.alpha is absolute only if event.absolute === true
+      let compassHeading = event.alpha || 0;
+
+      // iOS: Use webkitCompassHeading if available (always absolute)
+      if ((event as any).webkitCompassHeading !== undefined) {
+        compassHeading = (event as any).webkitCompassHeading;
+
+        // Debug once: Confirm we're using iOS absolute compass
+        if (!(window as any).__compassDebugLogged) {
+          console.log('✅ COMPASS: Using iOS webkitCompassHeading (absolute from magnetic north)');
+          (window as any).__compassDebugLogged = true;
+        }
+      }
+      // Android/Other: Warn if not absolute
+      else if (event.absolute === false) {
+        if (!(window as any).__compassDebugLogged) {
+          console.warn('⚠️ COMPASS: Relative orientation (NOT compass-referenced). Heading is relative to starting direction.');
+          (window as any).__compassDebugLogged = true;
+        }
+      }
+      // Using alpha with absolute=true
+      else {
+        if (!(window as any).__compassDebugLogged) {
+          console.log('✅ COMPASS: Using event.alpha with absolute=true (compass-referenced)');
+          (window as any).__compassDebugLogged = true;
+        }
+      }
+
       const magnetometerData = {
-        x: event.alpha || 0,   // Compass heading (0-360)
-        y: event.beta || 0,    // Front-to-back tilt (-180 to 180)
-        z: event.gamma || 0    // Left-to-right tilt (-90 to 90)
+        x: compassHeading,     // Compass heading (0-360°) from magnetic north
+        y: event.beta || 0,    // Front-to-back tilt (-180 to 180°)
+        z: event.gamma || 0,   // Left-to-right tilt (-90 to 90°)
       };
 
       setSensorData(prev => ({
