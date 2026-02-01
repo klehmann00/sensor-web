@@ -438,10 +438,10 @@ function applyFloatingCalibration(
     // Each sensor verified by the other two
     // Note: currentSpeed and rotationRate already defined above
 
-    // Calculate magnetometer heading (atan2 of horizontal components) and filter it
-    // Assuming mag.x = North, mag.y = East
-    const mag = gyroData[i] || { x: 0, y: 0, z: 0 }; // TODO: Use actual magnetometer data
-    const rawMagHeading = Math.atan2(mag.y, mag.x); // radians
+    // Get magnetometer heading (magData.x is already compass heading 0-360° from useSensors)
+    const magIndex = Math.min(i, magData.length - 1);
+    const mag = magData[magIndex] || { x: 0, y: 0, z: 0 };
+    const rawMagHeading = (mag.x * Math.PI) / 180; // Convert degrees to radians
     filteredMagHeading = observerAlpha * rawMagHeading + (1 - observerAlpha) * filteredMagHeading;
 
     // Calculate heading change rate from FILTERED magnetometer
