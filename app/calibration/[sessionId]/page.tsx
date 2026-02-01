@@ -1,7 +1,7 @@
 // app/calibration/[sessionId]/page.tsx
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useAdmin } from '@/contexts/AdminContext';
@@ -889,6 +889,10 @@ export default function CalibrationAnalysisPage() {
 
   // Track initial mount to avoid saving controls before loading from localStorage
   const [isInitialMount, setIsInitialMount] = useState(true);
+
+  // Ref to current signalControls for use in chart plugins (avoids stale closure)
+  const signalControlsRef = useRef(signalControls);
+  signalControlsRef.current = signalControls;
 
   // Auth guard
   useEffect(() => {
@@ -1779,16 +1783,6 @@ export default function CalibrationAnalysisPage() {
 
       const dataWithOffset = slicedData.map(v => v + control.offset);
 
-      // Debug magHeading specifically
-      if (key === 'magHeading') {
-        console.log('🧭 MAGHEADING DATASET BUILD:', {
-          inputFirst5: data.slice(0, 5),
-          slicedFirst5: slicedData.slice(0, 5),
-          offset: control.offset,
-          outputFirst5: dataWithOffset.slice(0, 5)
-        });
-      }
-
       datasets.push({
         label: control.label || key,
         data: dataWithOffset,
@@ -1905,12 +1899,6 @@ export default function CalibrationAnalysisPage() {
     addDataset('vehicleMoving', vehicleMovingSignal, signalControls.vehicleMoving);
 
     // Add magnetometer heading
-    console.log('magHeading DEBUG:', {
-      first5: calibrationResult.magHeading.slice(0, 5),
-      last5: calibrationResult.magHeading.slice(-5),
-      min: Math.min(...calibrationResult.magHeading),
-      max: Math.max(...calibrationResult.magHeading),
-    });
     addDataset('magHeading', calibrationResult.magHeading, signalControls.magHeading);
 
     // === CROSS-VERIFICATION TRIFECTA DEBUG ===
@@ -2150,15 +2138,16 @@ export default function CalibrationAnalysisPage() {
         const point = meta.data[activePoint.index];
         const value = dataset.data[activePoint.index];
 
-        // Get signal key to find offset
+        // Get signal key to find offset (use ref to avoid stale closure)
         const datasetLabel = dataset.label || '';
-        const signalKey = Object.keys(signalControls).find(key => {
-          const control = signalControls[key];
+        const currentControls = signalControlsRef.current;
+        const signalKey = Object.keys(currentControls).find(key => {
+          const control = currentControls[key];
           return (control.label || key) === datasetLabel;
         });
 
         // Subtract offset to show true value
-        const offset = signalKey ? signalControls[signalKey].offset : 0;
+        const offset = signalKey ? currentControls[signalKey].offset : 0;
         const trueValue = value - offset;
 
         const labelText = `${datasetLabel}: ${trueValue.toFixed(3)}`;
