@@ -129,6 +129,7 @@ interface CalibrationResult {
   gyroFilteredX: number[];
   gyroFilteredY: number[];
   gyroFilteredZ: number[];
+  gravityUpdating: boolean[];
 }
 
 /**
@@ -224,7 +225,8 @@ function applyFloatingCalibration(
     accelFilteredZ: [],
     gyroFilteredX: [],
     gyroFilteredY: [],
-    gyroFilteredZ: []
+    gyroFilteredZ: [],
+    gravityUpdating: [],
   };
 
   // State variables
@@ -389,19 +391,27 @@ function applyFloatingCalibration(
     result.gyroFilteredY.push(gyroFilteredY);
     result.gyroFilteredZ.push(gyroFilteredZ);
 
-    // === STEP 1: GRAVITY TRACKING (uses accelFiltered data) ===
-    gravity.x = alpha * gravity.x + (1 - alpha) * accelFilteredX;
-    gravity.y = alpha * gravity.y + (1 - alpha) * accelFilteredY;
-    gravity.z = alpha * gravity.z + (1 - alpha) * accelFilteredZ;
+    // === STEP 1: DETECT GPS ACCELERATION (used for both gravity and forward learning) ===
+    const virtualForwardAccel = interpolatedRawGPSAccel[i];
+    const significantAccel = Math.abs(virtualForwardAccel) > 0.2;
 
-    // === STEP 2: REMOVE GRAVITY FIRST (from raw data) ===
+    // === STEP 2: GRAVITY TRACKING (only when not accelerating) ===
+    // Skip gravity update during acceleration to prevent contamination
+    if (!significantAccel) {
+      gravity.x = alpha * gravity.x + (1 - alpha) * accelFilteredX;
+      gravity.y = alpha * gravity.y + (1 - alpha) * accelFilteredY;
+      gravity.z = alpha * gravity.z + (1 - alpha) * accelFilteredZ;
+    }
+    result.gravityUpdating.push(!significantAccel);
+
+    // === STEP 3: REMOVE GRAVITY FIRST (from raw data) ===
     const linearAccel = {
       x: accel.x - gravity.x,
       y: accel.y - gravity.y,
       z: accel.z - gravity.z
     };
 
-    // === STEP 3: FILTER THE LINEAR ACCELERATION (gravity already removed) ===
+    // === STEP 4: FILTER THE LINEAR ACCELERATION (gravity already removed) ===
     // This is the KEY FIX: filter the linear accel, not the raw accel!
     filteredLinearAccelX = observerAlpha * linearAccel.x + (1 - observerAlpha) * filteredLinearAccelX;
     filteredLinearAccelY = observerAlpha * linearAccel.y + (1 - observerAlpha) * filteredLinearAccelY;
@@ -413,16 +423,15 @@ function applyFloatingCalibration(
       z: filteredLinearAccelZ
     };
 
-    // === STEP 4: FILTER GYRO (unchanged) ===
+    // === STEP 5: FILTER GYRO (unchanged) ===
     filteredGyroX = observerAlpha * gyro.x + (1 - observerAlpha) * filteredGyroX;
     filteredGyroY = observerAlpha * gyro.y + (1 - observerAlpha) * filteredGyroY;
     filteredGyroZ = observerAlpha * gyro.z + (1 - observerAlpha) * filteredGyroZ;
 
-    // === STEP 2: USE CLEAN GPS ACCELERATION ===
+    // === STEP 6: USE CLEAN GPS ACCELERATION ===
     // Use the pre-calculated clean GPS acceleration instead of recalculating
     // This avoids noise from numerical differentiation on interpolated GPS
     const currentSpeed = gps.mps;
-    const virtualForwardAccel = interpolatedRawGPSAccel[i];
 
     const rotationRate = gyro.z;
     const virtualLateralAccel = currentSpeed * rotationRate;
@@ -434,7 +443,7 @@ function applyFloatingCalibration(
     result.gpsDeltaTime.push(interpolatedGPSDeltaTime[i]);
     result.gpsTimestamp.push(interpolatedGPSTimestamp[i]);
 
-    // === STEP 3: CROSS-VERIFICATION TRIFECTA (using FILTERED signals) ===
+    // === STEP 7: CROSS-VERIFICATION TRIFECTA (using FILTERED signals) ===
     // Each sensor verified by the other two
     // Note: currentSpeed and rotationRate already defined above
 
@@ -568,10 +577,9 @@ function applyFloatingCalibration(
     result.heading_fromGyro.push(heading_fromGyro * 180 / Math.PI);
 
     // === MAGNETOMETER HEADING ===
-    // Get magnetometer sample (interpolate if lengths don't match)
+    // Get magnetometer sample (magIndex defined in STEP 7)
     // Note: magSample.x IS the compass heading (0-360°) from webkitCompassHeading (iOS)
     // or event.alpha (other browsers) - no calculation needed!
-    const magIndex = Math.min(i, magData.length - 1);
     const magSample = magData[magIndex] || { x: 0, y: 0, z: 0 };
 
     // magSample.x is already the compass heading in degrees (0-360° from magnetic north)
@@ -620,15 +628,15 @@ function applyFloatingCalibration(
     result.vehicleStationary.push(vehicleStationary);
     result.vehicleMoving.push(vehicleMoving);
 
-    // === STEP 4: FORWARD DIRECTION LEARNING (Normalized) ===
-    // Use GPS-based acceleration for forward learning
-    const significantAccel = Math.abs(virtualForwardAccel) > 0.2; // m/s²
-
+    // === STEP 8: FORWARD DIRECTION LEARNING (Normalized) ===
+    // Use GPS-based acceleration for forward learning (significantAccel defined in STEP 1)
     if (significantAccel) {
       // Accumulate the linear acceleration direction
-      forward.x = alpha * forward.x + (1 - alpha) * linearAccel.x;
-      forward.y = alpha * forward.y + (1 - alpha) * linearAccel.y;
-      forward.z = alpha * forward.z + (1 - alpha) * linearAccel.z;
+      // During braking (negative gpsAccel), flip the sign since accel points backward
+      const sign = virtualForwardAccel > 0 ? 1 : -1;
+      forward.x = alpha * forward.x + (1 - alpha) * linearAccel.x * sign;
+      forward.y = alpha * forward.y + (1 - alpha) * linearAccel.y * sign;
+      forward.z = alpha * forward.z + (1 - alpha) * linearAccel.z * sign;
 
       // Normalize to keep it as a unit direction vector
       const forwardMag = Math.sqrt(forward.x**2 + forward.y**2 + forward.z**2);
@@ -650,7 +658,7 @@ function applyFloatingCalibration(
     result.forwardChangeRate.push(forwardChange);
     prevForward = { x: forward.x, y: forward.y, z: forward.z };
 
-    // === STEP 5: ORTHOGONALIZE FUSED FORWARD ===
+    // === STEP 9: ORTHOGONALIZE FUSED FORWARD ===
     const gravityMag = Math.sqrt(gravity.x**2 + gravity.y**2 + gravity.z**2);
     if (gravityMag > 0.1 && totalForwardUpdates > 0) {
       const gravityNorm = {
@@ -664,7 +672,7 @@ function applyFloatingCalibration(
       forward.z -= dot * gravityNorm.z;
     }
 
-    // === STEP 6: CALCULATE CONFIDENCE ===
+    // === STEP 10: CALCULATE CONFIDENCE ===
     const gravityMagnitude = gravityMag;
     const forwardMagnitude = Math.sqrt(forward.x**2 + forward.y**2 + forward.z**2);
 
@@ -673,7 +681,7 @@ function applyFloatingCalibration(
 
     const confidence = (gravityConfidence + forwardConfidence) / 2;
 
-    // === STEP 7: TRANSFORM TO VEHICLE COORDINATES ===
+    // === STEP 11: TRANSFORM TO VEHICLE COORDINATES ===
     const gravityNorm = Math.sqrt(gravity.x**2 + gravity.y**2 + gravity.z**2);
     const forwardNorm = Math.sqrt(forward.x**2 + forward.y**2 + forward.z**2);
 
@@ -875,6 +883,7 @@ export default function CalibrationAnalysisPage() {
     phoneStable: { visible: true, offset: 0, color: '#06b6d4', width: 3, label: 'Phone Stable (1=stable)' },
     vehicleStationary: { visible: true, offset: 0, color: '#8b5cf6', width: 3, label: 'Vehicle Stationary (1=no accel)' },
     vehicleMoving: { visible: true, offset: 0, color: '#ec4899', width: 3, label: 'Vehicle Moving (1=has speed)' },
+    gravityUpdating: { visible: true, offset: 0, color: '#f43f5e', width: 3, label: 'Gravity Updating (1=ON)' },
     magHeading: { visible: true, offset: 0, color: '#f59e0b', width: 2, label: 'Mag Heading (degrees)' },
 
     // GPS Speed (right axis)
@@ -909,7 +918,7 @@ export default function CalibrationAnalysisPage() {
   // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
     console.log('🚀 LOAD EFFECT RUNNING - This should appear on mount!');
-    const STORAGE_VERSION = 4; // GPS signal cleanup: added gpsSpeedSmoothed, renamed rawGPSAccel→gpsAccelAvg, hid gpsSpeed/virtualForward/gpsSpeedFiltered
+    const STORAGE_VERSION = 5; // Added gravityUpdating signal
     const savedControls = localStorage.getItem('masterSignalViewerControls');
     const savedVersion = localStorage.getItem('masterSignalViewerVersion');
 
@@ -1894,9 +1903,11 @@ export default function CalibrationAnalysisPage() {
     const phoneStableSignal = calibrationResult.phoneStable.map(s => s ? 0.5 : 0);
     const vehicleStationarySignal = calibrationResult.vehicleStationary.map(s => s ? 0.5 : 0);
     const vehicleMovingSignal = calibrationResult.vehicleMoving.map(s => s ? 0.5 : 0);
+    const gravityUpdatingSignal = calibrationResult.gravityUpdating.map(s => s ? 0.5 : 0);
     addDataset('phoneStable', phoneStableSignal, signalControls.phoneStable);
     addDataset('vehicleStationary', vehicleStationarySignal, signalControls.vehicleStationary);
     addDataset('vehicleMoving', vehicleMovingSignal, signalControls.vehicleMoving);
+    addDataset('gravityUpdating', gravityUpdatingSignal, signalControls.gravityUpdating);
 
     // Add magnetometer heading
     addDataset('magHeading', calibrationResult.magHeading, signalControls.magHeading);
