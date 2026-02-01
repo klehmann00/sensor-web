@@ -130,6 +130,9 @@ interface CalibrationResult {
   gyroFilteredY: number[];
   gyroFilteredZ: number[];
   gravityUpdating: boolean[];
+  xPrimeFiltered: number[];
+  yPrimeFiltered: number[];
+  zPrimeFiltered: number[];
 }
 
 /**
@@ -227,6 +230,9 @@ function applyFloatingCalibration(
     gyroFilteredY: [],
     gyroFilteredZ: [],
     gravityUpdating: [],
+    xPrimeFiltered: [],
+    yPrimeFiltered: [],
+    zPrimeFiltered: [],
   };
 
   // State variables
@@ -721,6 +727,21 @@ function applyFloatingCalibration(
 
     // Store results
     result.transformed.push(transformed);
+
+    // Apply EMA filter to transformed vehicle coordinates
+    if (i === 0) {
+      result.xPrimeFiltered.push(transformed.x);
+      result.yPrimeFiltered.push(transformed.y);
+      result.zPrimeFiltered.push(transformed.z);
+    } else {
+      const prevX = result.xPrimeFiltered[i - 1];
+      const prevY = result.yPrimeFiltered[i - 1];
+      const prevZ = result.zPrimeFiltered[i - 1];
+      result.xPrimeFiltered.push(alpha * prevX + (1 - alpha) * transformed.x);
+      result.yPrimeFiltered.push(alpha * prevY + (1 - alpha) * transformed.y);
+      result.zPrimeFiltered.push(alpha * prevZ + (1 - alpha) * transformed.z);
+    }
+
     result.gravityHistory.push({ ...gravity, timestamp: accel.timestamp });
     result.forwardHistory.push({ ...forward, timestamp: accel.timestamp });
     result.confidence.push(confidence);
@@ -861,14 +882,17 @@ export default function CalibrationAnalysisPage() {
     gravityZ: { visible: true, offset: 0, color: '#0e7490', width: 2, label: 'gravity_Z' },
 
     // Forward vector (learned direction in phone coordinates)
-    forwardX: { visible: true, offset: 0, color: '#a855f7', width: 2, label: 'forward_X (phone)' },
-    forwardY: { visible: true, offset: 0, color: '#ec4899', width: 2, label: 'forward_Y (phone)' },
-    forwardZ: { visible: true, offset: 0, color: '#06b6d4', width: 2, label: 'forward_Z (phone)' },
+    forwardX: { visible: true, offset: 0, color: 'rgba(239, 68, 68, 0.5)', width: 2, label: 'forward_X (phone)' },
+    forwardY: { visible: true, offset: 0, color: 'rgba(245, 158, 11, 0.5)', width: 2, label: 'forward_Y (phone)' },
+    forwardZ: { visible: true, offset: 0, color: 'rgba(59, 130, 246, 0.5)', width: 2, label: 'forward_Z (phone)' },
 
     // Transformed (primes) - MAIN SIGNALS (OUTPUT)
-    xPrime: { visible: true, offset: 0, color: '#dc2626', width: 3 },
-    yPrime: { visible: false, offset: 0, color: '#2563eb', width: 3 },
-    zPrime: { visible: false, offset: 0, color: '#16a34a', width: 3 },
+    xPrime: { visible: true, offset: 0, color: 'rgba(239, 68, 68, 0.3)', width: 1 },
+    yPrime: { visible: false, offset: 0, color: 'rgba(245, 158, 11, 0.3)', width: 1 },
+    zPrime: { visible: false, offset: 0, color: 'rgba(59, 130, 246, 0.3)', width: 1 },
+    xPrimeFiltered: { visible: true, offset: 0, color: '#ef4444', width: 2 },
+    yPrimeFiltered: { visible: false, offset: 0, color: '#f59e0b', width: 2 },
+    zPrimeFiltered: { visible: false, offset: 0, color: '#3b82f6', width: 2 },
 
     // Virtual accelerations
     virtualForward: { visible: false, offset: 0, color: '#10b981', width: 2 },
@@ -918,7 +942,7 @@ export default function CalibrationAnalysisPage() {
   // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
     console.log('🚀 LOAD EFFECT RUNNING - This should appear on mount!');
-    const STORAGE_VERSION = 5; // Added gravityUpdating signal
+    const STORAGE_VERSION = 6; // Added xPrimeFiltered/yPrimeFiltered/zPrimeFiltered signals
     const savedControls = localStorage.getItem('masterSignalViewerControls');
     const savedVersion = localStorage.getItem('masterSignalViewerVersion');
 
@@ -1884,6 +1908,9 @@ export default function CalibrationAnalysisPage() {
     addDataset('xPrime', xPrimeData, signalControls.xPrime);
     addDataset('yPrime', yPrimeData, signalControls.yPrime);
     addDataset('zPrime', zPrimeData, signalControls.zPrime);
+    addDataset('xPrimeFiltered', calibrationResult.xPrimeFiltered, signalControls.xPrimeFiltered);
+    addDataset('yPrimeFiltered', calibrationResult.yPrimeFiltered, signalControls.yPrimeFiltered);
+    addDataset('zPrimeFiltered', calibrationResult.zPrimeFiltered, signalControls.zPrimeFiltered);
 
     // Add virtual accelerations
     addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);
