@@ -1703,9 +1703,11 @@ export default function CalibrationAnalysisPage() {
     console.log('Magnetometer debug:', {
       hasMagData: !!session.magnetometerData,
       magLength: session.magnetometerData?.length || 0,
+      accelLength: session.accelerometerData?.length || 0,
       firstMag: session.magnetometerData?.[0],
       lastMag: session.magnetometerData?.[session.magnetometerData.length - 1],
-      sample: session.magnetometerData?.slice(0, 5)
+      sample: session.magnetometerData?.slice(0, 5),
+      calibrationMagHeading: calibrationResult.magHeading.slice(0, 5)
     });
 
     const rawMagX = session.magnetometerData?.map(m => {
@@ -1770,17 +1772,26 @@ export default function CalibrationAnalysisPage() {
 
     // Helper to add dataset
     const addDataset = (key: string, data: number[], control: any) => {
-  console.log(`addDataset called: ${key}`, { hasControl: !!control, visible: control?.visible, dataLength: data?.length, willAdd: !!(control && control.visible && data && data.length > 0) });
       if (!control || !control.visible) return;
 
       const slicedData = sliceData(data);
-  console.log(`  ${key} after slice:`, slicedData.length);
       if (slicedData.length === 0) return;
 
-  console.log(`  ✅ ${key} ADDED to chart`);
+      const dataWithOffset = slicedData.map(v => v + control.offset);
+
+      // Debug magHeading specifically
+      if (key === 'magHeading') {
+        console.log('🧭 MAGHEADING DATASET BUILD:', {
+          inputFirst5: data.slice(0, 5),
+          slicedFirst5: slicedData.slice(0, 5),
+          offset: control.offset,
+          outputFirst5: dataWithOffset.slice(0, 5)
+        });
+      }
+
       datasets.push({
-        label: control.label || key,  // Use custom label if available, otherwise use key
-        data: slicedData.map(v => v + control.offset),
+        label: control.label || key,
+        data: dataWithOffset,
         borderColor: control.color,
         backgroundColor: 'transparent',
         borderWidth: control.width || 1,
