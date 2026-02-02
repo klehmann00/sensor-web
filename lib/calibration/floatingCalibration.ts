@@ -95,6 +95,7 @@ export function applyFloatingCalibration(
     yPrimeFiltered: [],
     zPrimeFiltered: [],
     danX: [],
+    roadDAN: [],
   };
 
   // State variables
@@ -617,6 +618,25 @@ export function applyFloatingCalibration(
       const prevDAN = result.danX[i - 1];
       const smoothedSquare = danDecay * (prevDAN * prevDAN) + (1 - danDecay) * deviationSquared;
       result.danX.push(Math.sqrt(smoothedSquare));
+    }
+
+    // RoadDAN - 1-second average of DAN aligned with GPS updates (60 samples)
+    // This is the segment-level measurement for road roughness mapping
+    if (i === 0) {
+      (result as any)._danAccumulator = result.danX[0];
+      (result as any)._danSampleCount = 1;
+      result.roadDAN.push(result.danX[0]);
+    } else if (i % 60 === 0) {
+      // Every 60 samples (1 second), output the average and reset
+      const avgDAN = (result as any)._danAccumulator / (result as any)._danSampleCount;
+      result.roadDAN.push(avgDAN);
+      (result as any)._danAccumulator = 0;
+      (result as any)._danSampleCount = 0;
+    } else {
+      // Accumulate and repeat last value
+      (result as any)._danAccumulator += result.danX[i];
+      (result as any)._danSampleCount += 1;
+      result.roadDAN.push(result.roadDAN[result.roadDAN.length - 1]);
     }
 
     result.gravityHistory.push({ ...gravity, timestamp: accel.timestamp });

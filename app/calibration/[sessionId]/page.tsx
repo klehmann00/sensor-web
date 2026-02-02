@@ -1059,6 +1059,7 @@ export default function CalibrationAnalysisPage() {
     addDataset('yPrimeFiltered', calibrationResult.yPrimeFiltered, signalControls.yPrimeFiltered);
     addDataset('zPrimeFiltered', calibrationResult.zPrimeFiltered, signalControls.zPrimeFiltered);
     addDataset('danX', calibrationResult.danX, signalControls.danX);
+    addDataset('roadDAN', calibrationResult.roadDAN, signalControls.roadDAN);
 
     // Add virtual accelerations
     addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);

@@ -3,7 +3,7 @@
 
 import { SignalControls } from './types';
 
-export const STORAGE_VERSION = 9;
+export const STORAGE_VERSION = 10;
 
 export const defaultSignalControls: SignalControls = {
   // Raw accel (faded)
@@ -73,6 +73,7 @@ export const defaultSignalControls: SignalControls = {
 
   // DAN (road roughness)
   danX: { visible: true, offset: 25, color: '#10b981', width: 2, label: 'DAN (road roughness)' },
+  roadDAN: { visible: true, offset: 25, color: '#f59e0b', width: 3, label: 'RoadDAN (1-sec avg)' },
 
   // Virtual accelerations
   virtualForward: { visible: false, offset: 0, color: '#10b981', width: 2 },

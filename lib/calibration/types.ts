@@ -71,6 +71,7 @@ export interface CalibrationResult {
   yPrimeFiltered: number[];
   zPrimeFiltered: number[];
   danX: number[];
+  roadDAN: number[];
 }
 
 export interface SignalControl {
