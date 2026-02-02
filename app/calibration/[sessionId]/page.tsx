@@ -133,6 +133,7 @@ interface CalibrationResult {
   xPrimeFiltered: number[];
   yPrimeFiltered: number[];
   zPrimeFiltered: number[];
+  danX: number[];
 }
 
 /**
@@ -184,7 +185,8 @@ function applyFloatingCalibration(
   alpha: number = 0.95,
   observerAlpha: number = 0.05,
   filterAlpha: number = 0.05,
-  gpsSpeedAlpha: number = 0.95
+  gpsSpeedAlpha: number = 0.95,
+  danDecay: number = 0.95
 ): CalibrationResult {
   const result: CalibrationResult = {
     transformed: [],
@@ -233,6 +235,7 @@ function applyFloatingCalibration(
     xPrimeFiltered: [],
     yPrimeFiltered: [],
     zPrimeFiltered: [],
+    danX: [],
   };
 
   // State variables
@@ -742,6 +745,21 @@ function applyFloatingCalibration(
       result.zPrimeFiltered.push(alpha * prevZ + (1 - alpha) * transformed.z);
     }
 
+    // DAN (Delta Acceleration Noise) - combined 3-axis RMS road roughness
+    // Measures deviation from filtered signal across all axes
+    const devX = accel.x - accelFilteredX;
+    const devY = accel.y - accelFilteredY;
+    const devZ = accel.z - accelFilteredZ;
+    const deviationMagnitude = Math.sqrt(devX * devX + devY * devY + devZ * devZ);
+    const deviationSquared = deviationMagnitude * deviationMagnitude;
+    if (i === 0) {
+      result.danX.push(Math.sqrt(deviationSquared));
+    } else {
+      const prevDAN = result.danX[i - 1];
+      const smoothedSquare = danDecay * (prevDAN * prevDAN) + (1 - danDecay) * deviationSquared;
+      result.danX.push(Math.sqrt(smoothedSquare));
+    }
+
     result.gravityHistory.push({ ...gravity, timestamp: accel.timestamp });
     result.forwardHistory.push({ ...forward, timestamp: accel.timestamp });
     result.confidence.push(confidence);
@@ -816,6 +834,7 @@ export default function CalibrationAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [alpha, setAlpha] = useState(0.95);
   const [orientationFilterAlpha, setOrientationFilterAlpha] = useState(0.01); // Maximum smoothing for orientation
+  const [danDecay, setDanDecay] = useState(0.95);
   const [viewMode, setViewMode] = useState<'all' | 'scrollable'>('all');
   const [scrollPosition, setScrollPosition] = useState(0);
   const [windowSize, setWindowSize] = useState(200);
@@ -893,6 +912,7 @@ export default function CalibrationAnalysisPage() {
     xPrimeFiltered: { visible: true, offset: 0, color: '#ef4444', width: 2 },
     yPrimeFiltered: { visible: false, offset: 0, color: '#f59e0b', width: 2 },
     zPrimeFiltered: { visible: false, offset: 0, color: '#3b82f6', width: 2 },
+    danX: { visible: true, offset: 0, color: '#10b981', width: 2, label: 'DAN (road roughness)' },
 
     // Virtual accelerations
     virtualForward: { visible: false, offset: 0, color: '#10b981', width: 2 },
@@ -942,7 +962,7 @@ export default function CalibrationAnalysisPage() {
   // Load signal controls from localStorage on mount (with version checking)
   useEffect(() => {
     console.log('🚀 LOAD EFFECT RUNNING - This should appear on mount!');
-    const STORAGE_VERSION = 6; // Added xPrimeFiltered/yPrimeFiltered/zPrimeFiltered signals
+    const STORAGE_VERSION = 7; // Added DAN (Delta Acceleration Noise) signal
     const savedControls = localStorage.getItem('masterSignalViewerControls');
     const savedVersion = localStorage.getItem('masterSignalViewerVersion');
 
@@ -1106,9 +1126,10 @@ export default function CalibrationAnalysisPage() {
       alpha,
       observerAlpha,
       filterAlpha,
-      orientationFilterAlpha
+      orientationFilterAlpha,
+      danDecay
     );
-  }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha]);
+  }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay]);
 
   // Data slicing logic
   const getSlicedData = (data: Vector3D[]) => {
@@ -1911,6 +1932,7 @@ export default function CalibrationAnalysisPage() {
     addDataset('xPrimeFiltered', calibrationResult.xPrimeFiltered, signalControls.xPrimeFiltered);
     addDataset('yPrimeFiltered', calibrationResult.yPrimeFiltered, signalControls.yPrimeFiltered);
     addDataset('zPrimeFiltered', calibrationResult.zPrimeFiltered, signalControls.zPrimeFiltered);
+    addDataset('danX', calibrationResult.danX, signalControls.danX);
 
     // Add virtual accelerations
     addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);
@@ -2637,6 +2659,23 @@ export default function CalibrationAnalysisPage() {
                     />
                     <span className="text-xs text-gray-600">
                       α={orientationFilterAlpha.toFixed(2)} ({orientationFilterAlpha > 0.7 ? 'Heavy' : orientationFilterAlpha > 0.3 ? 'Medium' : 'Light'})
+                    </span>
+                  </div>
+
+                  {/* DAN Decay */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">DAN Decay:</span>
+                    <input
+                      type="range"
+                      min="0.80"
+                      max="0.99"
+                      step="0.01"
+                      value={danDecay}
+                      onChange={(e) => setDanDecay(parseFloat(e.target.value))}
+                      className="w-32"
+                    />
+                    <span className="text-xs text-gray-600">
+                      {danDecay.toFixed(2)} ({danDecay > 0.97 ? 'Slow' : danDecay > 0.92 ? 'Medium' : 'Fast'} decay)
                     </span>
                   </div>
 
