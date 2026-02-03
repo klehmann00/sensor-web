@@ -970,9 +970,16 @@ export default function CalibrationAnalysisPage() {
         backgroundColor: 'transparent',
         borderWidth: control.width || 1,
         pointRadius: 0,
-        yAxisID: control.yAxisID || 'y'
+        yAxisID: control.yAxisID || 'y',
+        ...(key === 'grid' ? { borderDash: [6, 4] } : {})
       });
     };
+
+    // Portable gridline - constant zero line, use offset slider to position
+    if (calibrationResult && calibrationResult.transformed.length > 0) {
+      const gridData = new Array(calibrationResult.transformed.length).fill(0);
+      addDataset('grid', gridData, signalControls.grid);
+    }
 
     // Add all signals
     addDataset('accelRawX', rawAccelX, signalControls.accelRawX);
@@ -1818,8 +1825,8 @@ export default function CalibrationAnalysisPage() {
                   </button>
                 </div>
 
-                {/* Signal Controls Panel - Readable Size with Tall Scroll Box */}
-                <div className="grid grid-cols-4 gap-1 mb-2 max-h-64 overflow-y-auto bg-gray-50 p-2 rounded text-xs">
+                {/* Signal Controls Panel - Readable Size */}
+                <div className="grid grid-cols-4 gap-1 mb-2 bg-gray-50 p-2 rounded text-xs">
                   {(() => {
                   console.log('🔍 Signal controls keys:', Object.keys(signalControls).length, 'signals');
                   console.log('🔍 accelLinear keys:', Object.keys(signalControls).filter(k => k.includes('accelLinear')));
@@ -1967,14 +1974,7 @@ export default function CalibrationAnalysisPage() {
                       },
                       plugins: {
                         legend: {
-                          display: true,
-                          position: 'top' as const,
-                          labels: {
-                            boxWidth: 20,
-                            font: { size: 10 },
-                            usePointStyle: true,
-                            padding: 10
-                          }
+                          display: false,
                         },
                         tooltip: {
                           enabled: false,  // Disable default tooltip

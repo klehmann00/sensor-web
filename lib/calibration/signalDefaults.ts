@@ -3,9 +3,12 @@
 
 import { SignalControls } from './types';
 
-export const STORAGE_VERSION = 10;
+export const STORAGE_VERSION = 11;
 
 export const defaultSignalControls: SignalControls = {
+  // Portable gridline
+  grid: { visible: true, offset: 0, color: '#9ca3af', width: 1, label: 'Grid (moveable)' },
+
   // Raw accel (faded)
   accelRawX: { visible: true, offset: 25, color: 'rgba(239, 68, 68, 0.3)', width: 1 },
   accelRawY: { visible: true, offset: 29, color: 'rgba(245, 158, 11, 0.3)', width: 1 },
