@@ -30,7 +30,7 @@ export function exponentialMovingAverage(data: number[], alpha: number): number[
  */
 export function interpolateGPSData(gpsData: GPSData[], targetLength: number): GPSData[] {
   if (gpsData.length === 0) {
-    return Array(targetLength).fill({ mph: 0, kph: 0, mps: 0, timestamp: 0 });
+    return Array(targetLength).fill({ mph: 0, kph: 0, mps: 0, lat: 0, lng: 0, timestamp: 0 });
   }
 
   if (gpsData.length === targetLength) {
@@ -53,6 +53,8 @@ export function interpolateGPSData(gpsData: GPSData[], targetLength: number): GP
         mph: prevGPS.mph + (nextGPS.mph - prevGPS.mph) * ratio,
         kph: prevGPS.kph + (nextGPS.kph - prevGPS.kph) * ratio,
         mps: prevGPS.mps + (nextGPS.mps - prevGPS.mps) * ratio,
+        lat: prevGPS.lat + (nextGPS.lat - prevGPS.lat) * ratio,
+        lng: prevGPS.lng + (nextGPS.lng - prevGPS.lng) * ratio,
         timestamp: i
       });
     }

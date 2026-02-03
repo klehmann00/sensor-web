@@ -90,7 +90,7 @@ class StorageManager {
   async storeGPSData(
     userId: string,
     sessionId: string,
-    data: { mph: number; kph: number; mps: number; timestamp: number }
+    data: { mph: number; kph: number; mps: number; lat: number; lng: number; timestamp: number }
   ): Promise<boolean> {
     if (!this.database) throw new Error('StorageManager not initialized');
 

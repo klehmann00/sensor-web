@@ -171,6 +171,8 @@ export default function DashboardPage() {
           mph: speed.mph,
           kph: speed.kph,
           mps: speed.kph / 3.6, // Convert to m/s for calculations
+          lat: speed.lat,
+          lng: speed.lng,
           timestamp: Date.now(),
         }
       );

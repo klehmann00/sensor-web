@@ -12,7 +12,18 @@ export interface GPSData {
   mph: number;
   kph: number;
   mps: number;
+  lat: number;
+  lng: number;
   timestamp: number;
+}
+
+export interface RoadDANSegment {
+  geohash8: string;
+  lat: number;
+  lng: number;
+  roadDAN: number;
+  timestamp: number;
+  speedMph: number;
 }
 
 export interface SessionDetail {
@@ -72,6 +83,7 @@ export interface CalibrationResult {
   zPrimeFiltered: number[];
   danX: number[];
   roadDAN: number[];
+  roadDANSegments: RoadDANSegment[];
 }
 
 export interface SignalControl {

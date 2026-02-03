@@ -1,12 +1,13 @@
 // lib/calibration/floatingCalibration.ts
 // Main calibration algorithm - transforms phone sensor data to vehicle coordinates
 
-import { Vector3D, GPSData, CalibrationResult } from './types';
+import ngeohash from 'ngeohash';
+import { Vector3D, GPSData, CalibrationResult, RoadDANSegment } from './types';
 
 // Helper function for GPS interpolation
 function interpolateGPSData(gpsData: GPSData[], targetLength: number): GPSData[] {
   if (gpsData.length === 0) {
-    return Array(targetLength).fill({ mph: 0, kph: 0, mps: 0, timestamp: 0 });
+    return Array(targetLength).fill({ mph: 0, kph: 0, mps: 0, lat: 0, lng: 0, timestamp: 0 });
   }
 
   if (gpsData.length === targetLength) {
@@ -29,6 +30,8 @@ function interpolateGPSData(gpsData: GPSData[], targetLength: number): GPSData[]
         mph: prevGPS.mph + (nextGPS.mph - prevGPS.mph) * ratio,
         kph: prevGPS.kph + (nextGPS.kph - prevGPS.kph) * ratio,
         mps: prevGPS.mps + (nextGPS.mps - prevGPS.mps) * ratio,
+        lat: prevGPS.lat + (nextGPS.lat - prevGPS.lat) * ratio,
+        lng: prevGPS.lng + (nextGPS.lng - prevGPS.lng) * ratio,
         timestamp: i
       });
     }
@@ -96,6 +99,7 @@ export function applyFloatingCalibration(
     zPrimeFiltered: [],
     danX: [],
     roadDAN: [],
+    roadDANSegments: [],
   };
 
   // State variables
@@ -141,6 +145,8 @@ export function applyFloatingCalibration(
       mph: recursiveSmoothedMPS * 2.237,
       kph: recursiveSmoothedMPS * 3.6,
       mps: recursiveSmoothedMPS,
+      lat: gpsData[i].lat,
+      lng: gpsData[i].lng,
       timestamp: gpsData[i].timestamp
     });
   }
@@ -159,6 +165,8 @@ export function applyFloatingCalibration(
       mph: smoothedMPS * 2.237,
       kph: smoothedMPS * 3.6,
       mps: smoothedMPS,
+      lat: gpsData[i].lat,
+      lng: gpsData[i].lng,
       timestamp: gpsData[i].timestamp
     });
   }
@@ -627,9 +635,22 @@ export function applyFloatingCalibration(
       (result as any)._danSampleCount = 1;
       result.roadDAN.push(result.danX[0]);
     } else if (i % 60 === 0) {
-      // Every 60 samples (1 second), output the average and reset
       const avgDAN = (result as any)._danAccumulator / (result as any)._danSampleCount;
       result.roadDAN.push(avgDAN);
+      // Create a geolocated RoadDAN segment
+      const gps = interpolatedGPS[i];
+      if (gps.lat !== 0 && gps.lng !== 0) {
+        const segment: RoadDANSegment = {
+          geohash8: ngeohash.encode(gps.lat, gps.lng, 8),
+          lat: gps.lat,
+          lng: gps.lng,
+          roadDAN: avgDAN,
+          timestamp: gps.timestamp,
+          speedMph: gps.mph,
+        };
+        result.roadDANSegments.push(segment);
+        console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gps.mph.toFixed(1), 'mph');
+      }
       (result as any)._danAccumulator = 0;
       (result as any)._danSampleCount = 0;
     } else {

@@ -18,7 +18,7 @@ interface SensorData {
   processedAccel: any;
   processedGyro: any;
   isActive: boolean;
-  speed: { mph: number; kph: number } | null;
+  speed: { mph: number; kph: number; lat: number; lng: number } | null;
 }
 
 export const useSensors = () => {
@@ -197,7 +197,9 @@ export const useSensors = () => {
             ...prev,
             speed: {
               mph: Math.round(speedMph * 10) / 10, // Round to 1 decimal
-              kph: Math.round(speedKph * 10) / 10
+              kph: Math.round(speedKph * 10) / 10,
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
             }
           }));
         },
