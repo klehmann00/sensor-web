@@ -198,6 +198,8 @@ class StorageManager {
           mph: point.mph || 0,
           kph: point.kph || 0,
           mps: point.mps || 0,
+          lat: point.lat || 0,
+          lng: point.lng || 0,
           timestamp: point.timestamp || Date.now()
         }));
       };
@@ -340,6 +342,8 @@ class StorageManager {
           mph: point.mph || 0,
           kph: point.kph || 0,
           mps: point.mps || 0,
+          lat: point.lat || 0,
+          lng: point.lng || 0,
           timestamp: point.timestamp || Date.now()
         }));
       };
