@@ -261,6 +261,12 @@ export default function DashboardPage() {
                 View Sessions
               </button>
               <button
+                onClick={() => router.push('/roads')}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                Road Map
+              </button>
+              <button
                 onClick={() => router.push('/live')}
                 className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
               >

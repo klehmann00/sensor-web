@@ -652,6 +652,17 @@ export function applyFloatingCalibration(
         };
         result.roadDANSegments.push(segment);
         console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gps.mph.toFixed(1), 'mph');
+
+        // Detect geographic jumps
+        if (result.roadDANSegments.length >= 2) {
+          const prev = result.roadDANSegments[result.roadDANSegments.length - 2];
+          const dlat = segment.lat - prev.lat;
+          const dlng = segment.lng - prev.lng;
+          const dist = Math.sqrt(dlat * dlat + dlng * dlng) * 111000; // rough meters
+          if (dist > 200) {
+            console.log('GPS JUMP:', dist.toFixed(0), 'm between segments', prev.geohash8, '->', segment.geohash8, 'lat:', prev.lat, '->', segment.lat, 'lng:', prev.lng, '->', segment.lng);
+          }
+        }
       }
       (result as any)._danAccumulator = 0;
       (result as any)._danSampleCount = 0;

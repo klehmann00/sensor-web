@@ -24,7 +24,22 @@ import { Vector3D, GPSData, SessionDetail, CalibrationResult, SignalControls } f
 import { applyFloatingCalibration } from '@/lib/calibration/floatingCalibration';
 import { defaultSignalControls, STORAGE_VERSION } from '@/lib/calibration/signalDefaults';
 import { exponentialMovingAverage } from '@/lib/calibration/helpers';
-import { createHistogram, addSample, getStats, histogramToString } from '@/lib/calibration/histogram';
+import {
+  createHistogram,
+  addSample,
+  getStats,
+  histogramToString,
+  loadHistogram,
+  saveHistogram,
+  getIncludedSessions,
+  markSessionIncluded,
+  mergeHistogram,
+  resetPersistentHistogram,
+  createPersistentHistogram,
+  DANHistogram,
+  PersistentHistogram
+} from '@/lib/calibration/histogram';
+import { uploadSessionRoads, getUploadedSessions, markSessionUploaded } from '@/lib/firebase/roadDatabase';
 import dynamic from 'next/dynamic';
 
 const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
@@ -312,6 +327,17 @@ export default function CalibrationAnalysisPage() {
     );
   }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay]);
 
+  // Debug: Log GPS coordinate stats
+  useEffect(() => {
+    if (!session || !calibrationResult) return;
+    const gpsWithCoords = session.gpsData.filter(g => g.lat !== 0 && g.lng !== 0);
+    const firstGPS = session.gpsData[0];
+    const lastGPS = session.gpsData[session.gpsData.length - 1];
+    console.log('GPS coords:', gpsWithCoords.length, 'of', session.gpsData.length, 'have coords. Segments:', calibrationResult.roadDANSegments.length);
+    if (firstGPS) console.log('First GPS:', firstGPS.lat, firstGPS.lng);
+    if (lastGPS) console.log('Last GPS:', lastGPS.lat, lastGPS.lng);
+  }, [session, calibrationResult]);
+
   // Build histogram from current recording's RoadDAN segments
   const sessionHistogram = useMemo(() => {
     if (!calibrationResult || calibrationResult.roadDANSegments.length === 0) {
@@ -326,6 +352,84 @@ export default function CalibrationAnalysisPage() {
     console.log('Session histogram:', histogramToString(histogram));
     return histogram;
   }, [calibrationResult]);
+
+  // Cumulative histogram state (persisted across sessions)
+  const [cumulativeHistogram, setCumulativeHistogram] = useState<PersistentHistogram | null>(null);
+  const [roadsUploaded, setRoadsUploaded] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // Load cumulative histogram from localStorage on mount
+  useEffect(() => {
+    const loaded = loadHistogram();
+    if (loaded) {
+      setCumulativeHistogram(loaded);
+      console.log('Loaded cumulative histogram:', histogramToString(loaded), 'sessions:', loaded.sessionCount);
+    }
+  }, []);
+
+  // Merge current session into cumulative histogram when ready
+  useEffect(() => {
+    if (!sessionHistogram || !sessionId) return;
+
+    const includedSessions = getIncludedSessions();
+    if (includedSessions.has(sessionId)) {
+      console.log('Session already included in cumulative histogram:', sessionId);
+      return;
+    }
+
+    // Create or update cumulative histogram
+    let cumulative = loadHistogram();
+    if (!cumulative) {
+      cumulative = createPersistentHistogram();
+    }
+
+    mergeHistogram(cumulative, sessionHistogram);
+    markSessionIncluded(sessionId);
+    saveHistogram(cumulative);
+    setCumulativeHistogram(cumulative);
+    console.log('Merged session into cumulative:', histogramToString(cumulative), 'sessions:', cumulative.sessionCount);
+  }, [sessionHistogram, sessionId]);
+
+  // Reset handler
+  const handleResetHistogram = () => {
+    resetPersistentHistogram();
+    setCumulativeHistogram(null);
+    console.log('Reset cumulative histogram');
+  };
+
+  // Check if current session has been uploaded to roads DB
+  useEffect(() => {
+    if (!sessionId) return;
+    const uploaded = getUploadedSessions();
+    setRoadsUploaded(uploaded.has(sessionId));
+  }, [sessionId]);
+
+  // Upload roads to Firebase
+  const handleUploadRoads = async () => {
+    if (!calibrationResult || calibrationResult.roadDANSegments.length === 0) return;
+
+    console.log('Uploading:', calibrationResult.roadDANSegments.length, 'segments,', new Set(calibrationResult.roadDANSegments.map(s => s.geohash8)).size, 'unique cells');
+
+    setUploading(true);
+    try {
+      const histogram = cumulativeHistogram || sessionHistogram;
+      const result = await uploadSessionRoads(calibrationResult.roadDANSegments, histogram);
+
+      if (result.error) {
+        console.error('Upload failed:', result.error);
+        alert('Upload failed: ' + result.error);
+      } else {
+        markSessionUploaded(sessionId);
+        setRoadsUploaded(true);
+        console.log(`Uploaded ${result.cellsUpdated} road cells`);
+      }
+    } catch (e) {
+      console.error('Upload error:', e);
+      alert('Upload error: ' + (e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // Data slicing logic
   const getSlicedData = (data: Vector3D[]) => {
@@ -2166,11 +2270,75 @@ export default function CalibrationAnalysisPage() {
                   </div>
                 )}
 
+                {/* Cumulative DAN Distribution */}
+                {cumulativeHistogram && (
+                  <div className="mt-4 p-3 bg-blue-50 rounded text-sm">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="font-semibold">Cumulative DAN Distribution</h3>
+                      <button
+                        onClick={handleResetHistogram}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2 text-center">
+                      <div>
+                        <div className="text-xs text-gray-500">P10</div>
+                        <div className="font-mono">{getStats(cumulativeHistogram).p10.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P25</div>
+                        <div className="font-mono">{getStats(cumulativeHistogram).p25.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P50</div>
+                        <div className="font-mono">{getStats(cumulativeHistogram).p50.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P75</div>
+                        <div className="font-mono">{getStats(cumulativeHistogram).p75.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P90</div>
+                        <div className="font-mono">{getStats(cumulativeHistogram).p90.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-500">
+                      Sessions: {cumulativeHistogram.sessionCount} |
+                      Samples: {cumulativeHistogram.totalSamples} |
+                      Range: {cumulativeHistogram.minDAN.toFixed(2)} - {cumulativeHistogram.maxDAN.toFixed(2)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload to Roads DB */}
+                {calibrationResult && calibrationResult.roadDANSegments.length > 0 && (
+                  <div className="mt-4 p-3 bg-gray-50 rounded text-sm">
+                    {roadsUploaded ? (
+                      <div className="flex items-center text-green-600">
+                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        Uploaded to Roads DB
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleUploadRoads}
+                        disabled={uploading}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
+                      >
+                        {uploading ? 'Uploading...' : 'Upload to Roads DB'}
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Road Roughness Map */}
                 {calibrationResult && calibrationResult.roadDANSegments.length > 0 && (
                   <div className="mt-4">
                     <h3 className="text-lg font-semibold mb-2">Road Roughness Map</h3>
-                    <RoadDANMap segments={calibrationResult.roadDANSegments} histogram={sessionHistogram} />
+                    <RoadDANMap segments={calibrationResult.roadDANSegments} histogram={cumulativeHistogram || sessionHistogram} />
                   </div>
                 )}
               </div>
