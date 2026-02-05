@@ -84,6 +84,8 @@ export interface CalibrationResult {
   danX: number[];
   roadDAN: number[];
   roadDANSegments: RoadDANSegment[];
+  donX: number[];
+  roadDON: number[];
 }
 
 export interface SignalControl {

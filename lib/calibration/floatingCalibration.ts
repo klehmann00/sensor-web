@@ -100,6 +100,8 @@ export function applyFloatingCalibration(
     danX: [],
     roadDAN: [],
     roadDANSegments: [],
+    donX: [],
+    roadDON: [],
   };
 
   // State variables
@@ -658,6 +660,38 @@ export function applyFloatingCalibration(
       (result as any)._danAccumulator += result.danX[i];
       (result as any)._danSampleCount += 1;
       result.roadDAN.push(result.roadDAN[result.roadDAN.length - 1]);
+    }
+
+    // DON (Delta Orientation Noise) - gyro-based road roughness
+    const gyroDevX = gyroData[i].x - result.gyroFilteredX[i];
+    const gyroDevY = gyroData[i].y - result.gyroFilteredY[i];
+    const gyroDevZ = gyroData[i].z - result.gyroFilteredZ[i];
+    const gyroDeviationMagnitude = Math.sqrt(gyroDevX * gyroDevX + gyroDevY * gyroDevY + gyroDevZ * gyroDevZ);
+    const gyroDeviationSquared = gyroDeviationMagnitude * gyroDeviationMagnitude;
+
+    const donDecay = 0.95;
+    if (i === 0) {
+      result.donX.push(Math.sqrt(gyroDeviationSquared));
+    } else {
+      const prevDON = result.donX[i - 1];
+      const smoothedSquare = donDecay * (prevDON * prevDON) + (1 - donDecay) * gyroDeviationSquared;
+      result.donX.push(Math.sqrt(smoothedSquare));
+    }
+
+    // RoadDON - 1-second average
+    if (i === 0) {
+      (result as any)._donAccumulator = result.donX[0];
+      (result as any)._donSampleCount = 1;
+      result.roadDON.push(result.donX[0]);
+    } else if (i % 60 === 0) {
+      const avgDON = (result as any)._donAccumulator / (result as any)._donSampleCount;
+      result.roadDON.push(avgDON);
+      (result as any)._donAccumulator = 0;
+      (result as any)._donSampleCount = 0;
+    } else {
+      (result as any)._donAccumulator += result.donX[i];
+      (result as any)._donSampleCount += 1;
+      result.roadDON.push(result.roadDON[result.roadDON.length - 1]);
     }
 
     result.gravityHistory.push({ ...gravity, timestamp: accel.timestamp });

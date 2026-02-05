@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Popup, CircleMarker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoadDANSegment } from '@/lib/calibration/types';
 
@@ -11,24 +11,20 @@ interface RoadDANMapProps {
 
 // Color based on DAN value: green (smooth) -> yellow -> red (rough)
 function getColor(dan: number): string {
-  // Typical range: 0.2 (smooth) to 2.0+ (rough)
-  const normalized = Math.min(dan / 2.0, 1); // 0-1 range
+  const normalized = Math.min(dan / 2.0, 1);
   if (normalized < 0.33) {
-    // Green to Yellow
     const t = normalized / 0.33;
     const r = Math.round(34 + t * (234 - 34));
     const g = Math.round(197 + t * (179 - 197));
-    const b = Math.round(8 + t * (8 - 94));
+    const b = Math.round(94 + t * (8 - 94));
     return `rgb(${r},${g},${b})`;
   } else if (normalized < 0.66) {
-    // Yellow to Orange
     const t = (normalized - 0.33) / 0.33;
     const r = Math.round(234 + t * (249 - 234));
     const g = Math.round(179 - t * (179 - 115));
     const b = Math.round(8 + t * (22 - 8));
     return `rgb(${r},${g},${b})`;
   } else {
-    // Orange to Red
     const t = (normalized - 0.66) / 0.34;
     const r = Math.round(249 - t * (249 - 239));
     const g = Math.round(115 - t * (115 - 68));
@@ -56,6 +52,19 @@ export default function RoadDANMap({ segments }: RoadDANMapProps) {
   const avgLat = segments.reduce((sum, s) => sum + s.lat, 0) / segments.length;
   const avgLng = segments.reduce((sum, s) => sum + s.lng, 0) / segments.length;
 
+  // Create line segments between consecutive points
+  const lineSegments: { positions: [number, number][]; color: string; dan: number; speed: number }[] = [];
+  for (let i = 0; i < segments.length - 1; i++) {
+    const current = segments[i];
+    const next = segments[i + 1];
+    lineSegments.push({
+      positions: [[current.lat, current.lng], [next.lat, next.lng]],
+      color: getColor(current.roadDAN),
+      dan: current.roadDAN,
+      speed: current.speedMph
+    });
+  }
+
   return (
     <div className="h-64 w-full rounded border">
       <MapContainer
@@ -67,26 +76,40 @@ export default function RoadDANMap({ segments }: RoadDANMapProps) {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        {segments.map((segment, idx) => (
-          <CircleMarker
-            key={`${segment.geohash8}-${idx}`}
-            center={[segment.lat, segment.lng]}
-            radius={8}
-            fillColor={getColor(segment.roadDAN)}
-            color="#333"
-            weight={1}
+        {lineSegments.map((seg, idx) => (
+          <Polyline
+            key={idx}
+            positions={seg.positions}
+            color={seg.color}
+            weight={6}
             opacity={0.8}
-            fillOpacity={0.7}
-          >
-            <Popup>
-              <div className="text-sm">
-                <div><strong>DAN:</strong> {segment.roadDAN.toFixed(2)}</div>
-                <div><strong>Speed:</strong> {segment.speedMph.toFixed(1)} mph</div>
-                <div><strong>Cell:</strong> {segment.geohash8}</div>
-              </div>
-            </Popup>
-          </CircleMarker>
+          />
         ))}
+        {/* Start and end markers */}
+        {segments.length > 0 && (
+          <>
+            <CircleMarker
+              center={[segments[0].lat, segments[0].lng]}
+              radius={8}
+              fillColor="#22c55e"
+              color="#166534"
+              weight={2}
+              fillOpacity={1}
+            >
+              <Popup>Start</Popup>
+            </CircleMarker>
+            <CircleMarker
+              center={[segments[segments.length - 1].lat, segments[segments.length - 1].lng]}
+              radius={8}
+              fillColor="#ef4444"
+              color="#991b1b"
+              weight={2}
+              fillOpacity={1}
+            >
+              <Popup>End</Popup>
+            </CircleMarker>
+          </>
+        )}
       </MapContainer>
     </div>
   );

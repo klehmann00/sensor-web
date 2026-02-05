@@ -43,6 +43,54 @@ ChartJS.register(
   annotationPlugin
 );
 
+// Color based on DAN value: green (smooth) -> yellow -> red (rough)
+function getDanColor(dan: number): string {
+  const normalized = Math.min(dan / 2.0, 1);
+  if (normalized < 0.33) {
+    const t = normalized / 0.33;
+    const r = Math.round(34 + t * (234 - 34));
+    const g = Math.round(197 + t * (179 - 197));
+    const b = Math.round(94 + t * (8 - 94));
+    return `rgb(${r},${g},${b})`;
+  } else if (normalized < 0.66) {
+    const t = (normalized - 0.33) / 0.33;
+    const r = Math.round(234 + t * (249 - 234));
+    const g = Math.round(179 - t * (179 - 115));
+    const b = Math.round(8 + t * (22 - 8));
+    return `rgb(${r},${g},${b})`;
+  } else {
+    const t = (normalized - 0.66) / 0.34;
+    const r = Math.round(249 - t * (249 - 239));
+    const g = Math.round(115 - t * (115 - 68));
+    const b = Math.round(22 + t * (68 - 22));
+    return `rgb(${r},${g},${b})`;
+  }
+}
+
+// Color based on DON value: green (smooth) -> yellow -> red (rough)
+// DON (gyro) has different scale than DAN (accel), typically 0-4 range
+function getDonColor(don: number): string {
+  const normalized = Math.min(don / 4.0, 1);
+  if (normalized < 0.33) {
+    const t = normalized / 0.33;
+    const r = Math.round(34 + t * (234 - 34));
+    const g = Math.round(197 + t * (179 - 197));
+    const b = Math.round(94 + t * (8 - 94));
+    return `rgb(${r},${g},${b})`;
+  } else if (normalized < 0.66) {
+    const t = (normalized - 0.33) / 0.33;
+    const r = Math.round(234 + t * (249 - 234));
+    const g = Math.round(179 - t * (179 - 115));
+    const b = Math.round(8 + t * (22 - 8));
+    return `rgb(${r},${g},${b})`;
+  } else {
+    const t = (normalized - 0.66) / 0.34;
+    const r = Math.round(249 - t * (249 - 239));
+    const g = Math.round(115 - t * (115 - 68));
+    const b = Math.round(22 + t * (68 - 22));
+    return `rgb(${r},${g},${b})`;
+  }
+}
 
 export default function CalibrationAnalysisPage() {
   const router = useRouter();
@@ -1073,6 +1121,59 @@ export default function CalibrationAnalysisPage() {
     addDataset('zPrimeFiltered', calibrationResult.zPrimeFiltered, signalControls.zPrimeFiltered);
     addDataset('danX', calibrationResult.danX, signalControls.danX);
     addDataset('roadDAN', calibrationResult.roadDAN, signalControls.roadDAN);
+
+    // Add colored DAN signal (uses segment coloring)
+    if (calibrationResult.roadDAN.length > 0 && signalControls.danColored?.visible) {
+      const danData = calibrationResult.roadDAN;
+      const offset = signalControls.danColored?.offset || 0;
+      datasets.push({
+        label: signalControls.danColored?.label || 'DAN Colored',
+        data: danData.map(v => v + offset),
+        borderColor: (ctx: any) => {
+          if (!ctx.p0) return '#22c55e';
+          const value = ctx.p0.parsed.y - offset;
+          return getDanColor(value);
+        },
+        segment: {
+          borderColor: (ctx: any) => {
+            const value = ctx.p0.parsed.y - offset;
+            return getDanColor(value);
+          }
+        },
+        backgroundColor: 'transparent',
+        borderWidth: signalControls.danColored?.width || 3,
+        pointRadius: 0,
+        yAxisID: 'y'
+      });
+    }
+
+    addDataset('donX', calibrationResult.donX, signalControls.donX);
+    addDataset('roadDON', calibrationResult.roadDON, signalControls.roadDON);
+
+    // Add colored DON signal (uses segment coloring)
+    if (calibrationResult.roadDON.length > 0 && signalControls.donColored?.visible) {
+      const donData = calibrationResult.roadDON;
+      const offset = signalControls.donColored?.offset || 0;
+      datasets.push({
+        label: signalControls.donColored?.label || 'DON Colored',
+        data: donData.map(v => v + offset),
+        borderColor: (ctx: any) => {
+          if (!ctx.p0) return '#22c55e';
+          const value = ctx.p0.parsed.y - offset;
+          return getDonColor(value);
+        },
+        segment: {
+          borderColor: (ctx: any) => {
+            const value = ctx.p0.parsed.y - offset;
+            return getDonColor(value);
+          }
+        },
+        backgroundColor: 'transparent',
+        borderWidth: signalControls.donColored?.width || 3,
+        pointRadius: 0,
+        yAxisID: 'y'
+      });
+    }
 
     // Add virtual accelerations
     addDataset('virtualForward', calibrationResult.virtualForwardAccel, signalControls.virtualForward);
