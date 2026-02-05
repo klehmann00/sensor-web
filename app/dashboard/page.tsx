@@ -212,27 +212,35 @@ export default function DashboardPage() {
   };
 
   const handleStop = async () => {
-    // Stop recording
-    if (user && sessionId) {
-      await StorageManager.stopRecording(user.uid, sessionId);
-      alert(`Recording stopped! Saved ${dataPoints} data points.`);
-    }
-    setIsRecording(false);
-
-    // Stop sensors and clear history
-    stopSensors();
-    setAccelHistory([]);
-    setGyroHistory([]);
-    setMagHistory([]);
-
-    // Release Wake Lock
-    if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-      } catch (e) {
-        console.warn('Failed to release Wake Lock:', e);
+    console.log('handleStop called', { isRecording, sessionId, userId: user?.uid });
+    try {
+      // Stop recording
+      if (user && sessionId) {
+        console.log('Calling StorageManager.stopRecording...');
+        await StorageManager.stopRecording(user.uid, sessionId);
+        console.log('StorageManager.stopRecording completed');
       }
+      setIsRecording(false);
+      console.log('Recording state set to false');
+
+      // Stop sensors and clear history
+      stopSensors();
+      console.log('Sensors stopped');
+      setAccelHistory([]);
+      setGyroHistory([]);
+      setMagHistory([]);
+
+      // Release Wake Lock
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+          wakeLockRef.current = null;
+        } catch (e) {
+          console.warn('Failed to release Wake Lock:', e);
+        }
+      }
+    } catch (error) {
+      console.error('handleStop failed:', error);
     }
   };
 

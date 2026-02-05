@@ -143,6 +143,12 @@ export default function CalibrationAnalysisPage() {
   const signalControlsRef = useRef(signalControls);
   signalControlsRef.current = signalControls;
 
+  // Refs for scrollPosition and viewMode for use in chart plugins (avoids stale closure)
+  const scrollPositionRef = useRef(scrollPosition);
+  scrollPositionRef.current = scrollPosition;
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+
   // Auth guard
   useEffect(() => {
     if (!loading && !user) {
@@ -1549,6 +1555,19 @@ export default function CalibrationAnalysisPage() {
       ctx.setLineDash([5, 5]);
       ctx.stroke();
       ctx.setLineDash([]);
+
+      // Draw datapoint index at bottom of crosshair
+      const dataIndex = tooltip._active[0].index;
+      const actualIndex = viewModeRef.current === 'scrollable'
+        ? scrollPositionRef.current + dataIndex
+        : dataIndex;
+      const labelX = x;
+      const labelY = chartArea.bottom - 8;
+      ctx.font = 'bold 11px Arial';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`#${actualIndex}`, labelX, labelY);
 
       // Draw label box above each datapoint
       tooltip._active.forEach((activePoint: any) => {
