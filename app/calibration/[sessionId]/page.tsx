@@ -24,6 +24,12 @@ import { Vector3D, GPSData, SessionDetail, CalibrationResult, SignalControls } f
 import { applyFloatingCalibration } from '@/lib/calibration/floatingCalibration';
 import { defaultSignalControls, STORAGE_VERSION } from '@/lib/calibration/signalDefaults';
 import { exponentialMovingAverage } from '@/lib/calibration/helpers';
+import dynamic from 'next/dynamic';
+
+const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
+  ssr: false,
+  loading: () => <div className="h-64 bg-gray-100 flex items-center justify-center">Loading map...</div>
+});
 
 // Register Chart.js components and annotation plugin
 ChartJS.register(
@@ -2009,6 +2015,14 @@ export default function CalibrationAnalysisPage() {
                   <strong>Controls:</strong> Drag left/right to scroll • Mouse wheel to zoom in/out •
                   Toggle checkboxes to show/hide signals • Sliders adjust vertical offset for clarity
                 </div>
+
+                {/* Road Roughness Map */}
+                {calibrationResult && calibrationResult.roadDANSegments.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-lg font-semibold mb-2">Road Roughness Map</h3>
+                    <RoadDANMap segments={calibrationResult.roadDANSegments} />
+                  </div>
+                )}
               </div>
             )}
           </>
