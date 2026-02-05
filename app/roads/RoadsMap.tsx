@@ -9,6 +9,9 @@ interface RoadsMapProps {
   roads: RoadCell[];
 }
 
+// Connection threshold - geohash8 cells are ~38m × 19m
+const MAX_CHAIN_GAP = 60; // meters
+
 // Color based on percentile: green (smooth) -> yellow -> red (rough)
 function getColorByPercentile(percentile: number): string {
   const normalized = percentile / 100;
@@ -45,7 +48,49 @@ function getDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * c;
 }
 
-const MAX_SEGMENT_DISTANCE = 500; // meters - only connect points within this distance
+// Build chains using nearest-neighbor algorithm
+function buildChains(roads: RoadCell[]): RoadCell[][] {
+  if (roads.length === 0) return [];
+
+  const chains: RoadCell[][] = [];
+  const unvisited = new Set<number>(roads.map((_, i) => i));
+
+  while (unvisited.size > 0) {
+    // Start a new chain with first unvisited cell
+    const startIdx = unvisited.values().next().value as number;
+    unvisited.delete(startIdx);
+    const chain: RoadCell[] = [roads[startIdx]];
+
+    // Grow chain by finding nearest neighbors
+    let growing = true;
+    while (growing && unvisited.size > 0) {
+      const lastCell = chain[chain.length - 1];
+      let nearestIdx = -1;
+      let nearestDist = Infinity;
+
+      // Find closest unvisited cell
+      for (const idx of unvisited) {
+        const dist = getDistanceMeters(lastCell.lat, lastCell.lng, roads[idx].lat, roads[idx].lng);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearestIdx = idx;
+        }
+      }
+
+      // Add to chain if within threshold, otherwise end chain
+      if (nearestIdx !== -1 && nearestDist <= MAX_CHAIN_GAP) {
+        unvisited.delete(nearestIdx);
+        chain.push(roads[nearestIdx]);
+      } else {
+        growing = false;
+      }
+    }
+
+    chains.push(chain);
+  }
+
+  return chains;
+}
 
 export default function RoadsMap({ roads }: RoadsMapProps) {
   const [isMounted, setIsMounted] = useState(false);
@@ -54,36 +99,25 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
     setIsMounted(true);
   }, []);
 
-  // Sort roads by geohash8 to group nearby cells, then create line segments
-  const { lineSegments, sortedRoads } = useMemo(() => {
-    if (roads.length === 0) {
-      return { lineSegments: [], sortedRoads: [] };
-    }
+  // Build chains using nearest-neighbor algorithm
+  const chains = useMemo(() => buildChains(roads), [roads]);
 
-    // Sort by geohash8 to group nearby cells
-    const sorted = [...roads].sort((a, b) => a.geohash8.localeCompare(b.geohash8));
-
-    // Create line segments between consecutive close points
-    const segments: { positions: [number, number][]; color: string; percentile: number }[] = [];
-
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const current = sorted[i];
-      const next = sorted[i + 1];
-
-      const distance = getDistanceMeters(current.lat, current.lng, next.lat, next.lng);
-
-      // Only connect if within max distance
-      if (distance <= MAX_SEGMENT_DISTANCE) {
-        segments.push({
-          positions: [[current.lat, current.lng], [next.lat, next.lng]],
-          color: getColorByPercentile(current.percentile),
-          percentile: current.percentile
+  // Calculate individual segments for rendering (each segment colored by starting cell)
+  const segments = useMemo(() => {
+    const result: { positions: [[number, number], [number, number]]; color: string; key: string }[] = [];
+    for (const chain of chains) {
+      for (let i = 0; i < chain.length - 1; i++) {
+        const startCell = chain[i];
+        const endCell = chain[i + 1];
+        result.push({
+          positions: [[startCell.lat, startCell.lng], [endCell.lat, endCell.lng]],
+          color: getColorByPercentile(startCell.percentile),
+          key: `${startCell.geohash8}-${endCell.geohash8}`
         });
       }
     }
-
-    return { lineSegments: segments, sortedRoads: sorted };
-  }, [roads]);
+    return result;
+  }, [chains]);
 
   if (!isMounted) {
     return <div className="h-full min-h-[400px] bg-gray-100 flex items-center justify-center">Loading map...</div>;
@@ -107,27 +141,27 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {/* Polyline segments connecting nearby points */}
-      {lineSegments.map((seg, idx) => (
+      {/* Render individual segments, each colored by starting cell's percentile */}
+      {segments.map((segment) => (
         <Polyline
-          key={`line-${idx}`}
-          positions={seg.positions}
-          color={seg.color}
+          key={segment.key}
+          positions={segment.positions}
+          color={segment.color}
           weight={6}
           opacity={0.8}
         />
       ))}
-      {/* Small semi-transparent markers at each point for visibility + popups */}
-      {sortedRoads.map((road) => (
+      {/* Render each cell as a small marker for popup interaction */}
+      {roads.map((road) => (
         <CircleMarker
           key={road.geohash8}
           center={[road.lat, road.lng]}
-          radius={3}
+          radius={4}
           fillColor={getColorByPercentile(road.percentile)}
           color="#333"
-          weight={1}
-          opacity={0.6}
-          fillOpacity={0.5}
+          weight={0}
+          opacity={0.4}
+          fillOpacity={0.4}
         >
           <Popup>
             <div className="text-sm">

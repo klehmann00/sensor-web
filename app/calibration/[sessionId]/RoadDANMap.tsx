@@ -120,8 +120,8 @@ export default function RoadDANMap({ segments, histogram }: RoadDANMapProps) {
               center={[segments[0].lat, segments[0].lng]}
               radius={8}
               fillColor="#22c55e"
-              color="#166534"
-              weight={2}
+              color="#22c55e"
+              weight={0}
               fillOpacity={1}
             >
               <Popup>Start</Popup>
@@ -130,8 +130,8 @@ export default function RoadDANMap({ segments, histogram }: RoadDANMapProps) {
               center={[segments[segments.length - 1].lat, segments[segments.length - 1].lng]}
               radius={8}
               fillColor="#ef4444"
-              color="#991b1b"
-              weight={2}
+              color="#ef4444"
+              weight={0}
               fillOpacity={1}
             >
               <Popup>End</Popup>

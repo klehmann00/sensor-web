@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useSensors } from '@/lib/hooks/useSensors';
@@ -19,6 +19,8 @@ interface Vector3D {
   z: number;
   timestamp?: number;
 }
+
+const MAX_RECORDING_SECONDS = 300; // 5 minutes
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -39,6 +41,8 @@ export default function DashboardPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [dataPoints, setDataPoints] = useState(0);
+  const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_RECORDING_SECONDS);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   // NEW: History arrays for charts (max 100 points)
   const [accelHistory, setAccelHistory] = useState<Vector3D[]>([]);
@@ -179,45 +183,79 @@ export default function DashboardPage() {
     }
   }, [speed, isRecording, sessionId, user, isActive]);
 
-  const handleStartSensors = async () => {
+  const handleStart = async () => {
+    if (!user) return;
+
+    // Start sensors first
     const cleanup = await startSensors();
     if (!cleanup) {
       alert('Failed to start sensors. Make sure you granted permission.');
+      return;
     }
-  };
 
-  const handleStopSensors = () => {
-    stopSensors();
-    // Clear history when stopping sensors
-    setAccelHistory([]);
-    setGyroHistory([]);
-    setMagHistory([]);
-  };
-
-  const handleStartRecording = async () => {
-    if (!user) return;
-
+    // Create session and start recording
     const newSessionId = `session_${Date.now()}`;
     await StorageManager.startRecordingSession(user.uid, newSessionId);
     setSessionId(newSessionId);
     setIsRecording(true);
     setDataPoints(0);
+    setRecordingSecondsLeft(MAX_RECORDING_SECONDS);
+
+    // Request Wake Lock to keep screen on
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+      }
+    } catch (e) {
+      console.warn('Wake Lock not supported or failed:', e);
+    }
   };
 
-  const handleStopRecording = async () => {
-    if (!user || !sessionId) return;
-
-    await StorageManager.stopRecording(user.uid, sessionId);
+  const handleStop = async () => {
+    // Stop recording
+    if (user && sessionId) {
+      await StorageManager.stopRecording(user.uid, sessionId);
+      alert(`Recording stopped! Saved ${dataPoints} data points.`);
+    }
     setIsRecording(false);
-    alert(`Recording stopped! Saved ${dataPoints} data points.`);
+
+    // Stop sensors and clear history
+    stopSensors();
+    setAccelHistory([]);
+    setGyroHistory([]);
+    setMagHistory([]);
+
+    // Release Wake Lock
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      } catch (e) {
+        console.warn('Failed to release Wake Lock:', e);
+      }
+    }
   };
+
+  // Auto-stop timer
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const interval = setInterval(() => {
+      setRecordingSecondsLeft(prev => {
+        if (prev <= 1) {
+          handleStop();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRecording]);
 
   const handleLogout = async () => {
-    if (isRecording) {
-      await handleStopRecording();
-    }
-    if (isActive) {
-      stopSensors();
+    if (isRecording || isActive) {
+      await handleStop();
     }
     await logout();
     router.push('/');
@@ -291,14 +329,14 @@ export default function DashboardPage() {
           {/* Permission Warning (Mobile Only) */}
           {isMobile && !permissionGranted && (
             <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded mb-4">
-              ⚠️ Sensor permission not granted. Click "Start Sensors" to request access.
+              ⚠️ Sensor permission not granted. Click "Start Recording" to request access.
             </div>
           )}
 
           {/* Recording Status */}
           {isRecording && (
             <div className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded mb-4">
-              🔴 Recording... {dataPoints} data points captured
+              🔴 Recording... {dataPoints} data points | {Math.floor(recordingSecondsLeft / 60)}:{(recordingSecondsLeft % 60).toString().padStart(2, '0')} remaining
             </div>
           )}
 
@@ -312,46 +350,21 @@ export default function DashboardPage() {
           {/* Controls (Mobile Only) */}
           {isMobile && (
             <div className="flex flex-wrap gap-3">
-              {!isActive ? (
+              {!isRecording ? (
                 <button
-                  onClick={handleStartSensors}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
+                  onClick={handleStart}
+                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
                 >
-                  🚀 Start Sensors
+                  ▶️ Start Recording
                 </button>
               ) : (
                 <button
-                  onClick={handleStopSensors}
-                  className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-semibold"
-                >
-                  ⏹️ Stop Sensors
-                </button>
-              )}
-
-              {isActive && !isRecording && (
-                <button
-                  onClick={handleStartRecording}
-                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
-                >
-                  ⏺️ Start Recording
-                </button>
-              )}
-
-              {isRecording && (
-                <button
-                  onClick={handleStopRecording}
+                  onClick={handleStop}
                   className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold"
                 >
                   ⏹️ Stop Recording
                 </button>
               )}
-            </div>
-          )}
-
-          {isMobile && (
-            <div className="mt-4 text-sm text-gray-600">
-              Status: {isActive ? '🟢 Sensors Active' : '⚫ Sensors Inactive'} |
-              {isRecording ? ' 🔴 Recording' : ' ⚪ Not Recording'}
             </div>
           )}
         </div>

@@ -133,7 +133,6 @@ export const useSensors = () => {
         if (!(window as any).__compassDebugLogged) {
           const msg = '✅ COMPASS: Using iOS webkitCompassHeading (absolute from magnetic north)';
           console.log(msg);
-          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }
@@ -142,7 +141,6 @@ export const useSensors = () => {
         if (!(window as any).__compassDebugLogged) {
           const msg = '⚠️ COMPASS: Relative orientation (NOT compass-referenced). Heading is relative to starting direction.';
           console.warn(msg);
-          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }
@@ -151,7 +149,6 @@ export const useSensors = () => {
         if (!(window as any).__compassDebugLogged) {
           const msg = '✅ COMPASS: Using event.alpha with absolute=true (compass-referenced)';
           console.log(msg);
-          alert(msg);
           (window as any).__compassDebugLogged = true;
         }
       }

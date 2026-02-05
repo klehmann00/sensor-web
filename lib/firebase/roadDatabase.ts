@@ -2,7 +2,7 @@
 // Firebase database for aggregated road roughness data
 
 import { database } from '@/lib/firebase';
-import { ref, set, get, child } from 'firebase/database';
+import { ref, get, update } from 'firebase/database';
 import { getPercentile, DANHistogram } from '@/lib/calibration/histogram';
 import { RoadDANSegment } from '@/lib/calibration/types';
 
@@ -56,76 +56,85 @@ export async function uploadSessionRoads(
     return { cellsUpdated: 0, error: 'No segments to upload' };
   }
 
-  // Group segments by geohash8
-  const cellMap = new Map<string, { lat: number; lng: number; danSum: number; count: number }>();
+  // Group segments by geohash8, tracking sums for averaging
+  const cellMap = new Map<string, { latSum: number; lngSum: number; danSum: number; count: number }>();
 
   for (const segment of segments) {
     const existing = cellMap.get(segment.geohash8);
     if (existing) {
+      existing.latSum += segment.lat;
+      existing.lngSum += segment.lng;
       existing.danSum += segment.roadDAN;
       existing.count++;
     } else {
       cellMap.set(segment.geohash8, {
-        lat: segment.lat,
-        lng: segment.lng,
+        latSum: segment.lat,
+        lngSum: segment.lng,
         danSum: segment.roadDAN,
         count: 1
       });
     }
   }
 
-  let cellsUpdated = 0;
-  const dbRef = ref(database);
+  try {
+    // Batch read: get all existing road data in one call
+    const snapshot = await get(ref(database, 'roads'));
+    const existingRoads: Record<string, RoadCell> = snapshot.exists() ? snapshot.val() : {};
 
-  for (const [geohash8, cellData] of cellMap) {
-    try {
+    // Build updates object
+    const updates: Record<string, RoadCell> = {};
+    const now = Date.now();
+
+    for (const [geohash8, cellData] of cellMap) {
+      const sessionAvgLat = cellData.latSum / cellData.count;
+      const sessionAvgLng = cellData.lngSum / cellData.count;
       const sessionAvgDAN = cellData.danSum / cellData.count;
-      const sessionPercentile = histogram ? getPercentile(histogram, sessionAvgDAN) : 50;
 
-      // Read existing data for this cell
-      const snapshot = await get(child(dbRef, `roads/${geohash8}`));
+      const existing = existingRoads[geohash8];
 
-      let newCell: RoadCell;
-
-      if (snapshot.exists()) {
-        // Merge with existing data (weighted average)
-        const existing = snapshot.val() as RoadCell;
+      if (existing) {
+        // Merge with existing data (weighted average for lat, lng, and DAN)
         const totalSamples = existing.sampleCount + cellData.count;
+        const weightedLat = (existing.lat * existing.sampleCount + sessionAvgLat * cellData.count) / totalSamples;
+        const weightedLng = (existing.lng * existing.sampleCount + sessionAvgLng * cellData.count) / totalSamples;
         const weightedDAN = (existing.avgDAN * existing.sampleCount + sessionAvgDAN * cellData.count) / totalSamples;
         const newPercentile = histogram ? getPercentile(histogram, weightedDAN) : existing.percentile;
 
-        newCell = {
+        updates[`roads/${geohash8}`] = {
           geohash8,
-          lat: cellData.lat,
-          lng: cellData.lng,
+          lat: weightedLat,
+          lng: weightedLng,
           avgDAN: weightedDAN,
           percentile: newPercentile,
           sampleCount: totalSamples,
-          lastUpdated: Date.now()
+          lastUpdated: now
         };
       } else {
         // Create new cell
-        newCell = {
+        const sessionPercentile = histogram ? getPercentile(histogram, sessionAvgDAN) : 50;
+
+        updates[`roads/${geohash8}`] = {
           geohash8,
-          lat: cellData.lat,
-          lng: cellData.lng,
+          lat: sessionAvgLat,
+          lng: sessionAvgLng,
           avgDAN: sessionAvgDAN,
           percentile: sessionPercentile,
           sampleCount: cellData.count,
-          lastUpdated: Date.now()
+          lastUpdated: now
         };
       }
-
-      // Write to Firebase
-      await set(ref(database, `roads/${geohash8}`), newCell);
-      cellsUpdated++;
-    } catch (e) {
-      console.error(`Failed to update cell ${geohash8}:`, e);
     }
-  }
 
-  console.log(`Uploaded ${cellsUpdated} road cells to Firebase`);
-  return { cellsUpdated };
+    // Batch write: single update call for all cells
+    await update(ref(database), updates);
+    const cellsUpdated = Object.keys(updates).length;
+
+    console.log(`Uploaded ${cellsUpdated} road cells to Firebase`);
+    return { cellsUpdated };
+  } catch (e) {
+    console.error('Failed to upload road cells:', e);
+    return { cellsUpdated: 0, error: 'Failed to upload road data' };
+  }
 }
 
 // Get all road cells from Firebase
