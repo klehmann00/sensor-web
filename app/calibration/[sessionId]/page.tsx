@@ -24,6 +24,7 @@ import { Vector3D, GPSData, SessionDetail, CalibrationResult, SignalControls } f
 import { applyFloatingCalibration } from '@/lib/calibration/floatingCalibration';
 import { defaultSignalControls, STORAGE_VERSION } from '@/lib/calibration/signalDefaults';
 import { exponentialMovingAverage } from '@/lib/calibration/helpers';
+import { createHistogram, addSample, getStats, histogramToString } from '@/lib/calibration/histogram';
 import dynamic from 'next/dynamic';
 
 const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
@@ -310,6 +311,21 @@ export default function CalibrationAnalysisPage() {
       danDecay
     );
   }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay]);
+
+  // Build histogram from current recording's RoadDAN segments
+  const sessionHistogram = useMemo(() => {
+    if (!calibrationResult || calibrationResult.roadDANSegments.length === 0) {
+      return null;
+    }
+
+    const histogram = createHistogram();
+    for (const segment of calibrationResult.roadDANSegments) {
+      addSample(histogram, segment.roadDAN);
+    }
+
+    console.log('Session histogram:', histogramToString(histogram));
+    return histogram;
+  }, [calibrationResult]);
 
   // Data slicing logic
   const getSlicedData = (data: Vector3D[]) => {
@@ -2117,11 +2133,44 @@ export default function CalibrationAnalysisPage() {
                   Toggle checkboxes to show/hide signals • Sliders adjust vertical offset for clarity
                 </div>
 
+                {/* Histogram Stats */}
+                {sessionHistogram && (
+                  <div className="mt-4 p-3 bg-gray-50 rounded text-sm">
+                    <h3 className="font-semibold mb-2">Session DAN Distribution</h3>
+                    <div className="grid grid-cols-5 gap-2 text-center">
+                      <div>
+                        <div className="text-xs text-gray-500">P10</div>
+                        <div className="font-mono">{getStats(sessionHistogram).p10.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P25</div>
+                        <div className="font-mono">{getStats(sessionHistogram).p25.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P50</div>
+                        <div className="font-mono">{getStats(sessionHistogram).p50.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P75</div>
+                        <div className="font-mono">{getStats(sessionHistogram).p75.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">P90</div>
+                        <div className="font-mono">{getStats(sessionHistogram).p90.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-500">
+                      Samples: {sessionHistogram.totalSamples} |
+                      Range: {sessionHistogram.minDAN.toFixed(2)} - {sessionHistogram.maxDAN.toFixed(2)}
+                    </div>
+                  </div>
+                )}
+
                 {/* Road Roughness Map */}
                 {calibrationResult && calibrationResult.roadDANSegments.length > 0 && (
                   <div className="mt-4">
                     <h3 className="text-lg font-semibold mb-2">Road Roughness Map</h3>
-                    <RoadDANMap segments={calibrationResult.roadDANSegments} />
+                    <RoadDANMap segments={calibrationResult.roadDANSegments} histogram={sessionHistogram} />
                   </div>
                 )}
               </div>
