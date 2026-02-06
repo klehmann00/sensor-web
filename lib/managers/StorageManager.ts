@@ -160,6 +160,7 @@ class StorageManager {
           accelerometerPoints: accelCount,
           gyroscopePoints: gyroCount,
           magnetometerPoints: magCount,
+          vehicleId: sessionData.metadata?.vehicleId || null,
         });
       }
 

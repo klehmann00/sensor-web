@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/hooks/useAuth';
 import { useAdmin } from '@/contexts/AdminContext';
 import StorageManager from '@/lib/managers/StorageManager';
 import { database } from '@/lib/firebase';
+import { Vehicle, getUserVehicles } from '@/lib/firebase/vehicleDatabase';
 
 interface Session {
   id: string;
@@ -17,6 +18,7 @@ interface Session {
   accelerometerPoints: number;
   gyroscopePoints: number;
   magnetometerPoints: number;
+  vehicleId?: string;
 }
 
 export default function SessionsPage() {
@@ -24,6 +26,7 @@ export default function SessionsPage() {
   const { user, loading } = useAuth();
   const { isAdmin } = useAdmin();
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Auth guard
@@ -58,6 +61,29 @@ export default function SessionsPage() {
       fetchSessions();
     }
   }, [user]);
+
+  // Fetch vehicles
+  useEffect(() => {
+    const fetchVehicles = async () => {
+      if (!user) return;
+      try {
+        const userVehicles = await getUserVehicles(user.uid);
+        setVehicles(userVehicles);
+      } catch (error) {
+        console.error('Error fetching vehicles:', error);
+      }
+    };
+    if (user) {
+      fetchVehicles();
+    }
+  }, [user]);
+
+  const getVehicleName = (vehicleId?: string) => {
+    if (!vehicleId) return 'Unknown';
+    const vehicle = vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) return 'Unknown';
+    return vehicle.nickname || `${vehicle.year} ${vehicle.make} ${vehicle.model}`;
+  };
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
@@ -157,6 +183,9 @@ export default function SessionsPage() {
                       Session ID
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Vehicle
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Start Time
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -178,6 +207,9 @@ export default function SessionsPage() {
                     <tr key={session.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {session.id}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {getVehicleName((session as any).vehicleId)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {formatDate(session.startTime)}

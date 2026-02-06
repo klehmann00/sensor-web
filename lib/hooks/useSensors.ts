@@ -40,17 +40,14 @@ export const useSensors = () => {
 
   const requestPermission = useCallback(async () => {
     if (typeof window === 'undefined') return false;
-    alert('window exists, checking DeviceMotionEvent');
 
     // Check if DeviceMotionEvent exists and has requestPermission
     if (
       typeof DeviceMotionEvent !== 'undefined' &&
       typeof (DeviceMotionEvent as any).requestPermission === 'function'
     ) {
-      alert('iOS device, requesting permission...');
       try {
         const permission = await (DeviceMotionEvent as any).requestPermission();
-        alert('iOS permission response: ' + permission);
         const granted = permission === 'granted';
         setPermissionGranted(granted);
 
@@ -62,12 +59,10 @@ export const useSensors = () => {
         return granted;
       } catch (error) {
         console.error('Permission request failed:', error);
-        alert('Permission request failed: ' + error);
         return false;
       }
     } else {
       // Permission not required (non-iOS or older browser)
-      alert('Non-iOS or permission not required, granting automatically');
       setPermissionGranted(true);
       return true;
     }
@@ -88,11 +83,8 @@ export const useSensors = () => {
       gpsWatchIdRef.current = null;
     }
 
-    alert('startSensors called, permissionGranted: ' + permissionGranted);
-
     if (!permissionGranted) {
       const granted = await requestPermission();
-      alert('Permission request result: ' + granted);
       if (!granted) return false;
     }
 
