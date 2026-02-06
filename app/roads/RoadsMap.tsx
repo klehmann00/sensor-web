@@ -148,7 +148,7 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
           positions={segment.positions}
           color={segment.color}
           weight={6}
-          opacity={0.8}
+          opacity={1}
         />
       ))}
       {/* Render each cell as a small marker for popup interaction */}
@@ -160,8 +160,8 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
           fillColor={getColorByPercentile(road.percentile)}
           color="#333"
           weight={0}
-          opacity={0.4}
-          fillOpacity={0.4}
+          opacity={1}
+          fillOpacity={1}
         >
           <Popup>
             <div className="text-sm">

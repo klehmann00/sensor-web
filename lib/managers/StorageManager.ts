@@ -16,14 +16,17 @@ class StorageManager {
     this.database = database;
   }
 
-  async startRecordingSession(userId: string, sessionId: string): Promise<boolean> {
+  async startRecordingSession(userId: string, sessionId: string, vehicleId?: string): Promise<boolean> {
     if (!this.database) throw new Error('StorageManager not initialized');
 
     try {
       const sessionRef = ref(this.database, `users/${userId}/sessions/${sessionId}`);
       await set(sessionRef, {
         startTime: Date.now(),
-        status: 'recording'
+        status: 'recording',
+        metadata: {
+          vehicleId: vehicleId || null
+        }
       });
       return true;
     } catch (error) {

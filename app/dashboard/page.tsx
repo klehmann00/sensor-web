@@ -12,6 +12,9 @@ import GyroscopeChart from '@/components/sensors/GyroscopeChart';
 import MagnetometerChart from '@/components/sensors/MagnetometerChart';
 import StorageManager from '@/lib/managers/StorageManager';
 import { database } from '@/lib/firebase';
+import { Vehicle, getUserVehicles, getDefaultVehicle, addVehicle } from '@/lib/firebase/vehicleDatabase';
+import VehicleSelector from '@/components/vehicles/VehicleSelector';
+import AddVehicleModal from '@/components/vehicles/AddVehicleModal';
 
 interface Vector3D {
   x: number;
@@ -44,6 +47,11 @@ export default function DashboardPage() {
   const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_RECORDING_SECONDS);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
+  // Vehicle state
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
+
   // NEW: History arrays for charts (max 100 points)
   const [accelHistory, setAccelHistory] = useState<Vector3D[]>([]);
   const [gyroHistory, setGyroHistory] = useState<Vector3D[]>([]);
@@ -75,6 +83,20 @@ export default function DashboardPage() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Load user's vehicles
+  useEffect(() => {
+    const loadVehicles = async () => {
+      if (!user) return;
+      const userVehicles = await getUserVehicles(user.uid);
+      setVehicles(userVehicles);
+      const defaultVehicle = await getDefaultVehicle(user.uid);
+      if (defaultVehicle) {
+        setSelectedVehicleId(defaultVehicle.id);
+      }
+    };
+    loadVehicles();
+  }, [user]);
 
   // NEW: Update history arrays when sensor data changes
   useEffect(() => {
@@ -195,7 +217,7 @@ export default function DashboardPage() {
 
     // Create session and start recording
     const newSessionId = `session_${Date.now()}`;
-    await StorageManager.startRecordingSession(user.uid, newSessionId);
+    await StorageManager.startRecordingSession(user.uid, newSessionId, selectedVehicleId || undefined);
     setSessionId(newSessionId);
     setIsRecording(true);
     setDataPoints(0);
@@ -267,6 +289,23 @@ export default function DashboardPage() {
     }
     await logout();
     router.push('/');
+  };
+
+  const handleAddVehicle = async (vehicleData: { year: number; make: string; model: string; nickname?: string }) => {
+    if (!user) return;
+    try {
+      const newVehicleId = await addVehicle(user.uid, {
+        ...vehicleData,
+        isDefault: vehicles.length === 0
+      });
+      // Refresh vehicles list
+      const updatedVehicles = await getUserVehicles(user.uid);
+      setVehicles(updatedVehicles);
+      setSelectedVehicleId(newVehicleId);
+      setShowAddVehicleModal(false);
+    } catch (e) {
+      console.error('Failed to add vehicle:', e);
+    }
   };
 
   if (loading) {
@@ -357,7 +396,13 @@ export default function DashboardPage() {
 
           {/* Controls (Mobile Only) */}
           {isMobile && (
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3 items-center">
+              <VehicleSelector
+                vehicles={vehicles}
+                selectedVehicleId={selectedVehicleId}
+                onSelect={setSelectedVehicleId}
+                onAddNew={() => setShowAddVehicleModal(true)}
+              />
               {!isRecording ? (
                 <button
                   onClick={handleStart}
@@ -405,6 +450,13 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Add Vehicle Modal */}
+      <AddVehicleModal
+        isOpen={showAddVehicleModal}
+        onClose={() => setShowAddVehicleModal(false)}
+        onSave={handleAddVehicle}
+      />
     </div>
   );
 }
