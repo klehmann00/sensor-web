@@ -40,6 +40,8 @@ import {
   PersistentHistogram
 } from '@/lib/calibration/histogram';
 import { uploadSessionRoads, getUploadedSessions, markSessionUploaded } from '@/lib/firebase/roadDatabase';
+import { uploadSessionPotholes } from '@/lib/firebase/potholeDatabase';
+import { Vehicle, getUserVehicles } from '@/lib/firebase/vehicleDatabase';
 import dynamic from 'next/dynamic';
 
 const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
@@ -115,6 +117,7 @@ export default function CalibrationAnalysisPage() {
   const { user, loading } = useAuth();
   const { isAdmin } = useAdmin();
   const [session, setSession] = useState<SessionDetail | null>(null);
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [alpha, setAlpha] = useState(0.95);
@@ -303,6 +306,21 @@ export default function CalibrationAnalysisPage() {
     }
   }, [user, sessionId]);
 
+  // Fetch vehicle when session loads
+  useEffect(() => {
+    const fetchVehicle = async () => {
+      if (!user || !session?.metadata?.vehicleId) return;
+      try {
+        const vehicles = await getUserVehicles(user.uid);
+        const found = vehicles.find(v => v.id === session.metadata?.vehicleId);
+        setVehicle(found || null);
+      } catch (error) {
+        console.error('Error fetching vehicle:', error);
+      }
+    };
+    fetchVehicle();
+  }, [user, session]);
+
   // GPS data verification and debugging
   useEffect(() => {
     if (session) {
@@ -320,17 +338,22 @@ export default function CalibrationAnalysisPage() {
   // Apply floating calibration with current parameters
   const calibrationResult = useMemo(() => {
     if (!session) return null;
-    return applyFloatingCalibration(
-      session.accelerometerData,
-      session.gyroscopeData,
-      session.magnetometerData || [],
-      session.gpsData || [],
-      alpha,
-      observerAlpha,
-      filterAlpha,
-      orientationFilterAlpha,
-      danDecay
-    );
+    try {
+      return applyFloatingCalibration(
+        session.accelerometerData,
+        session.gyroscopeData,
+        session.magnetometerData || [],
+        session.gpsData || [],
+        alpha,
+        observerAlpha,
+        filterAlpha,
+        orientationFilterAlpha,
+        danDecay
+      );
+    } catch (error) {
+      console.error('Calibration failed:', error);
+      return null;
+    }
   }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay]);
 
   // Debug: Log GPS coordinate stats
@@ -343,6 +366,31 @@ export default function CalibrationAnalysisPage() {
     if (firstGPS) console.log('First GPS:', firstGPS.lat, firstGPS.lng);
     if (lastGPS) console.log('Last GPS:', lastGPS.lat, lastGPS.lng);
   }, [session, calibrationResult]);
+
+  // Upload detected potholes to Firebase
+  const [potholesUploaded, setPotholesUploaded] = useState(false);
+  useEffect(() => {
+    if (!user || !sessionId || !calibrationResult || potholesUploaded) return;
+    if (!calibrationResult.potholes || calibrationResult.potholes.length === 0) return;
+
+    const uploadPotholes = async () => {
+      console.log(`Uploading ${calibrationResult.potholes.length} detected potholes...`);
+      try {
+        const potholeResult = await uploadSessionPotholes(
+          user.uid,
+          sessionId as string,
+          session?.metadata?.vehicleId,
+          calibrationResult.potholes
+        );
+        console.log('Pothole upload result:', potholeResult);
+        setPotholesUploaded(true);
+      } catch (e) {
+        console.error('Failed to upload potholes:', e);
+      }
+    };
+
+    uploadPotholes();
+  }, [user, sessionId, calibrationResult, session?.metadata?.vehicleId, potholesUploaded]);
 
   // Build histogram from current recording's RoadDAN segments
   const sessionHistogram = useMemo(() => {
@@ -1273,6 +1321,26 @@ export default function CalibrationAnalysisPage() {
       });
     }
 
+    // Add valid for DAN indicator (green=valid, red=filtered out)
+    if (calibrationResult.validForDAN?.length > 0 && signalControls.validForDAN?.visible) {
+      const offset = signalControls.validForDAN?.offset || 0;
+      datasets.push({
+        label: signalControls.validForDAN?.label || 'Valid for DAN',
+        data: calibrationResult.validForDAN.map(valid => (valid ? 0.5 : 0) + offset),
+        borderColor: '#22c55e',
+        segment: {
+          borderColor: (ctx: any) => {
+            const idx = ctx.p0DataIndex;
+            return calibrationResult.validForDAN[idx] ? '#22c55e' : '#ef4444';
+          }
+        },
+        backgroundColor: 'transparent',
+        borderWidth: signalControls.validForDAN?.width || 2,
+        pointRadius: 0,
+        yAxisID: 'y'
+      });
+    }
+
     addDataset('donX', calibrationResult.donX, signalControls.donX);
     addDataset('roadDON', calibrationResult.roadDON, signalControls.roadDON);
 
@@ -1871,10 +1939,19 @@ export default function CalibrationAnalysisPage() {
             {/* Session Metadata */}
             <div className="bg-white rounded-lg shadow-lg p-2 mb-2">
               <h2 className="text-xl font-bold mb-3 text-gray-800">Session Information</h2>
-              <div className="grid md:grid-cols-4 gap-3">
+              <div className="grid md:grid-cols-5 gap-3">
                 <div>
                   <div className="text-xs text-gray-600">Session ID</div>
                   <div className="font-semibold text-sm text-gray-800">{session.sessionId}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600">Vehicle</div>
+                  <div className="font-semibold text-sm text-gray-800">
+                    {vehicle ? `${vehicle.year} ${vehicle.make} ${vehicle.model}` : 'Unknown'}
+                  </div>
+                  {vehicle?.nickname && (
+                    <div className="text-xs text-gray-500">{vehicle.nickname}</div>
+                  )}
                 </div>
                 <div>
                   <div className="text-xs text-gray-600">Start Time</div>

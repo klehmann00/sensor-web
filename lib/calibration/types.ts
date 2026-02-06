@@ -26,11 +26,20 @@ export interface RoadDANSegment {
   speedMph: number;
 }
 
+export interface SessionMetadata {
+  vehicleId?: string;
+  dataPoints?: number;
+  accelerometerPoints?: number;
+  gyroscopePoints?: number;
+  magnetometerPoints?: number;
+}
+
 export interface SessionDetail {
   sessionId: string;
   startTime: number;
   endTime?: number;
   status: string;
+  metadata?: SessionMetadata;
   accelerometerData: Vector3D[];
   gyroscopeData: Vector3D[];
   magnetometerData: Vector3D[];
@@ -86,6 +95,20 @@ export interface CalibrationResult {
   roadDANSegments: RoadDANSegment[];
   donX: number[];
   roadDON: number[];
+  validForDAN: boolean[];
+  speedMph: number[];
+  accelerationMphPerSec: number[];
+  potholes: PotholeDetection[];
+}
+
+export interface PotholeDetection {
+  index: number;
+  timestamp: number;
+  lat: number;
+  lng: number;
+  donValue: number;
+  danValue: number;
+  speedMph: number;
 }
 
 export interface SignalControl {

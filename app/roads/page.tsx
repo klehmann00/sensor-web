@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { getAllRoads, RoadCell } from '@/lib/firebase/roadDatabase';
+import { getPotholesInBounds, Pothole } from '@/lib/firebase/potholeDatabase';
 import dynamic from 'next/dynamic';
 
 const RoadsMap = dynamic(() => import('./RoadsMap'), {
@@ -15,6 +16,7 @@ export default function RoadsPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [roads, setRoads] = useState<RoadCell[]>([]);
+  const [potholes, setPotholes] = useState<Pothole[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,22 +27,36 @@ export default function RoadsPage() {
     }
   }, [user, authLoading, router]);
 
-  // Load roads from Firebase
+  // Load roads and potholes from Firebase
   useEffect(() => {
-    const loadRoads = async () => {
+    const loadData = async () => {
       try {
         const roadData = await getAllRoads();
         setRoads(roadData);
+
+        // Calculate bounds from roads for pothole query
+        if (roadData.length > 0) {
+          const lats = roadData.map(r => r.lat);
+          const lngs = roadData.map(r => r.lng);
+          const bounds = {
+            north: Math.max(...lats) + 0.01,
+            south: Math.min(...lats) - 0.01,
+            east: Math.max(...lngs) + 0.01,
+            west: Math.min(...lngs) - 0.01,
+          };
+          const potholeData = await getPotholesInBounds(bounds);
+          setPotholes(potholeData);
+        }
       } catch (e) {
-        console.error('Failed to load roads:', e);
-        setError('Failed to load road data');
+        console.error('Failed to load data:', e);
+        setError(`Failed to load road data: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
         setLoading(false);
       }
     };
 
     if (user) {
-      loadRoads();
+      loadData();
     }
   }, [user]);
 
@@ -98,7 +114,7 @@ export default function RoadsPage() {
             Loading road data...
           </div>
         ) : (
-          <RoadsMap roads={roads} />
+          <RoadsMap roads={roads} potholes={potholes} />
         )}
       </div>
     </div>

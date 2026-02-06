@@ -3,7 +3,7 @@
 
 import { SignalControls } from './types';
 
-export const STORAGE_VERSION = 13;
+export const STORAGE_VERSION = 14;
 
 export const defaultSignalControls: SignalControls = {
   // Portable gridline
@@ -78,6 +78,7 @@ export const defaultSignalControls: SignalControls = {
   danX: { visible: true, offset: 25, color: '#10b981', width: 2, label: 'DAN (road roughness)' },
   roadDAN: { visible: true, offset: 25, color: '#f59e0b', width: 3, label: 'RoadDAN (1-sec avg)' },
   danColored: { visible: true, offset: 25, color: '#22c55e', width: 3, label: 'DAN Colored (RYG)' },
+  validForDAN: { visible: true, offset: 27, color: '#22c55e', width: 2, label: 'Valid for DAN (green=valid, red=filtered)' },
   donX: { visible: false, offset: 25, color: '#8b5cf6', width: 2, label: 'DON (gyro roughness)' },
   roadDON: { visible: false, offset: 25, color: '#a855f7', width: 3, label: 'RoadDON (1-sec avg)' },
   donColored: { visible: true, offset: 25, color: '#22c55e', width: 3, label: 'DON Colored (RYG)' },

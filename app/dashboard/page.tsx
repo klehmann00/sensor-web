@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useSensors } from '@/lib/hooks/useSensors';
@@ -12,7 +12,7 @@ import GyroscopeChart from '@/components/sensors/GyroscopeChart';
 import MagnetometerChart from '@/components/sensors/MagnetometerChart';
 import StorageManager from '@/lib/managers/StorageManager';
 import { database } from '@/lib/firebase';
-import { Vehicle, getUserVehicles, getDefaultVehicle, addVehicle } from '@/lib/firebase/vehicleDatabase';
+import { Vehicle, getUserVehicles, addVehicle } from '@/lib/firebase/vehicleDatabase';
 import VehicleSelector from '@/components/vehicles/VehicleSelector';
 import AddVehicleModal from '@/components/vehicles/AddVehicleModal';
 
@@ -46,6 +46,7 @@ export default function DashboardPage() {
   const [dataPoints, setDataPoints] = useState(0);
   const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_RECORDING_SECONDS);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const handleStopRef = useRef<(() => Promise<void>) | undefined>(undefined);
 
   // Vehicle state
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -58,6 +59,13 @@ export default function DashboardPage() {
   const [magHistory, setMagHistory] = useState<Vector3D[]>([]);
   const MAX_HISTORY_POINTS = 100;
   const [isMobile, setIsMobile] = useState(false);
+  const [deviceCompatibility, setDeviceCompatibility] = useState<{
+    accelerometer: boolean;
+    gyroscope: boolean;
+    magnetometer: boolean;
+    gps: boolean;
+    checked: boolean;
+  }>({ accelerometer: false, gyroscope: false, magnetometer: false, gps: false, checked: false });
 
   // Auth guard
   useEffect(() => {
@@ -84,18 +92,62 @@ export default function DashboardPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Check device sensor compatibility
+  useEffect(() => {
+    const checkSensors = async () => {
+      const compatibility = {
+        accelerometer: false,
+        gyroscope: false,
+        magnetometer: false,
+        gps: false,
+        checked: true
+      };
+
+      // Check accelerometer
+      if (typeof window !== 'undefined' && window.DeviceMotionEvent) {
+        compatibility.accelerometer = true;
+      }
+
+      // Check gyroscope (also uses DeviceMotionEvent but rotationRate)
+      if (typeof window !== 'undefined' && window.DeviceMotionEvent) {
+        compatibility.gyroscope = true;
+      }
+
+      // Check magnetometer (DeviceOrientationEvent)
+      if (typeof window !== 'undefined' && window.DeviceOrientationEvent) {
+        compatibility.magnetometer = true;
+      }
+
+      // Check GPS
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        compatibility.gps = true;
+      }
+
+      setDeviceCompatibility(compatibility);
+    };
+
+    checkSensors();
+  }, []);
+
   // Load user's vehicles
   useEffect(() => {
-    const loadVehicles = async () => {
+    const fetchVehicles = async () => {
       if (!user) return;
-      const userVehicles = await getUserVehicles(user.uid);
-      setVehicles(userVehicles);
-      const defaultVehicle = await getDefaultVehicle(user.uid);
-      if (defaultVehicle) {
-        setSelectedVehicleId(defaultVehicle.id);
+      try {
+        const userVehicles = await getUserVehicles(user.uid);
+        setVehicles(userVehicles);
+
+        // Check localStorage for last-used vehicle first
+        const lastUsedId = localStorage.getItem('lastUsedVehicleId');
+        if (lastUsedId && userVehicles.find(v => v.id === lastUsedId)) {
+          setSelectedVehicleId(lastUsedId);
+        }
+        // If no last-used, don't auto-select — require explicit selection
+      } catch (error) {
+        console.error('Error fetching vehicles:', error);
       }
     };
-    loadVehicles();
+    fetchVehicles();
   }, [user]);
 
   // NEW: Update history arrays when sensor data changes
@@ -208,6 +260,20 @@ export default function DashboardPage() {
   const handleStart = async () => {
     if (!user) return;
 
+    // Confirmation dialog
+    const selectedVehicle = vehicles.find(v => v.id === selectedVehicleId);
+    const vehicleName = selectedVehicle
+      ? `${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model}${selectedVehicle.nickname ? ` (${selectedVehicle.nickname})` : ''}`
+      : 'Unknown';
+
+    const confirmed = window.confirm(`Start recording with:\n\n${vehicleName}\n\nIs this correct?`);
+    if (!confirmed) return;
+
+    // Save as last-used vehicle
+    if (selectedVehicleId) {
+      localStorage.setItem('lastUsedVehicleId', selectedVehicleId);
+    }
+
     // Start sensors first
     const cleanup = await startSensors();
     if (!cleanup) {
@@ -233,7 +299,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     console.log('handleStop called', { isRecording, sessionId, userId: user?.uid });
     try {
       // Stop recording
@@ -264,7 +330,12 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('handleStop failed:', error);
     }
-  };
+  }, [user, sessionId, isRecording, stopSensors]);
+
+  // Keep handleStopRef updated
+  useEffect(() => {
+    handleStopRef.current = handleStop;
+  }, [handleStop]);
 
   // Auto-stop timer
   useEffect(() => {
@@ -273,7 +344,7 @@ export default function DashboardPage() {
     const interval = setInterval(() => {
       setRecordingSecondsLeft(prev => {
         if (prev <= 1) {
-          handleStop();
+          handleStopRef.current?.();
           return 0;
         }
         return prev - 1;
@@ -373,6 +444,19 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* Device Compatibility Warning (Mobile Only) */}
+          {isMobile && deviceCompatibility.checked && (!deviceCompatibility.accelerometer || !deviceCompatibility.gps) && (
+            <div className="bg-red-100 border-2 border-red-400 text-red-800 px-4 py-3 rounded mb-4">
+              <div className="font-bold">⚠️ Device Not Compatible</div>
+              <div className="text-sm">
+                This device is missing required sensors:
+                {!deviceCompatibility.accelerometer && <div>• Accelerometer</div>}
+                {!deviceCompatibility.gps && <div>• GPS</div>}
+              </div>
+              <div className="text-sm mt-2">Recording may not work properly on this device.</div>
+            </div>
+          )}
+
           {/* Permission Warning (Mobile Only) */}
           {isMobile && !permissionGranted && (
             <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded mb-4">
@@ -397,12 +481,18 @@ export default function DashboardPage() {
           {/* Controls (Mobile Only) */}
           {isMobile && (
             <div className="flex flex-wrap gap-3 items-center">
-              <VehicleSelector
-                vehicles={vehicles}
-                selectedVehicleId={selectedVehicleId}
-                onSelect={setSelectedVehicleId}
-                onAddNew={() => setShowAddVehicleModal(true)}
-              />
+              <div className="w-full p-3 mb-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+                <div className="text-sm font-semibold text-yellow-800 mb-2">⚠️ Recording Vehicle:</div>
+                <VehicleSelector
+                  vehicles={vehicles}
+                  selectedVehicleId={selectedVehicleId}
+                  onSelect={setSelectedVehicleId}
+                  onAddNew={() => setShowAddVehicleModal(true)}
+                />
+                {!selectedVehicleId && (
+                  <div className="text-red-600 text-sm mt-2 font-semibold">Please select a vehicle before recording</div>
+                )}
+              </div>
               {!isRecording ? (
                 <button
                   onClick={handleStart}

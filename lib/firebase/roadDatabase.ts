@@ -56,10 +56,17 @@ export async function uploadSessionRoads(
     return { cellsUpdated: 0, error: 'No segments to upload' };
   }
 
+  // Filter to only valid segments (safety net)
+  const validSegments = segments.filter(seg => (seg as any).validSegment !== false);
+
+  if (validSegments.length === 0) {
+    return { cellsUpdated: 0, error: 'No valid segments to upload' };
+  }
+
   // Group segments by geohash8, tracking sums for averaging
   const cellMap = new Map<string, { latSum: number; lngSum: number; danSum: number; count: number }>();
 
-  for (const segment of segments) {
+  for (const segment of validSegments) {
     const existing = cellMap.get(segment.geohash8);
     if (existing) {
       existing.latSum += segment.lat;

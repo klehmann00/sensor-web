@@ -1,12 +1,26 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Polyline, CircleMarker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, CircleMarker, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+
+// Custom pothole icon
+const potholeIcon = (confidence: number) => L.divIcon({
+  html: `<div style="font-size: 24px; text-shadow: 1px 1px 2px white, -1px -1px 2px white;">${confidence >= 0.5 ? '⚠️' : '⚡'}</div>`,
+  className: 'pothole-marker',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+});
 import { RoadCell } from '@/lib/firebase/roadDatabase';
+import { Pothole, recordCleanPass } from '@/lib/firebase/potholeDatabase';
+import { useAdmin } from '@/contexts/AdminContext';
+import { ref, remove } from 'firebase/database';
+import { database } from '@/lib/firebase';
 
 interface RoadsMapProps {
   roads: RoadCell[];
+  potholes?: Pothole[];
 }
 
 // Connection threshold - geohash8 cells are ~38m × 19m
@@ -92,12 +106,33 @@ function buildChains(roads: RoadCell[]): RoadCell[][] {
   return chains;
 }
 
-export default function RoadsMap({ roads }: RoadsMapProps) {
+export default function RoadsMap({ roads, potholes = [] }: RoadsMapProps) {
   const [isMounted, setIsMounted] = useState(false);
+  const [showPotholes, setShowPotholes] = useState(true);
+  const { isAdmin } = useAdmin();
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  const handleSimulateCleanPass = async (geohash: string) => {
+    await recordCleanPass(geohash);
+    window.location.reload();
+  };
+
+  const handleDeletePothole = async (geohash: string) => {
+    if (window.confirm('Delete this pothole?')) {
+      await remove(ref(database, `potholes/${geohash}`));
+      window.location.reload();
+    }
+  };
+
+  const handleClearAllPotholes = async () => {
+    if (window.confirm('Delete ALL potholes? This cannot be undone.')) {
+      await remove(ref(database, 'potholes'));
+      window.location.reload();
+    }
+  };
 
   // Build chains using nearest-neighbor algorithm
   const chains = useMemo(() => buildChains(roads), [roads]);
@@ -132,7 +167,28 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
   const avgLng = roads.reduce((sum, r) => sum + r.lng, 0) / roads.length;
 
   return (
-    <MapContainer
+    <div className="relative h-full">
+      {/* Pothole toggle control */}
+      <div className="absolute top-2 right-2 z-[1000] bg-white rounded-lg shadow-lg p-2">
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <input
+            type="checkbox"
+            checked={showPotholes}
+            onChange={(e) => setShowPotholes(e.target.checked)}
+            className="w-4 h-4"
+          />
+          <span>⚠️ Potholes ({potholes.length})</span>
+        </label>
+        {isAdmin && potholes.length > 0 && (
+          <button
+            onClick={handleClearAllPotholes}
+            className="mt-2 w-full px-2 py-1 bg-red-500 text-white text-xs rounded"
+          >
+            Clear All Potholes
+          </button>
+        )}
+      </div>
+      <MapContainer
       center={[avgLat, avgLng]}
       zoom={13}
       style={{ height: '100%', width: '100%', minHeight: '400px' }}
@@ -176,6 +232,40 @@ export default function RoadsMap({ roads }: RoadsMapProps) {
           </Popup>
         </CircleMarker>
       ))}
+      {/* Pothole markers */}
+      {showPotholes && potholes.map((pothole) => (
+        <Marker
+          key={pothole.id || pothole.geohash}
+          position={[pothole.lat, pothole.lng]}
+          icon={potholeIcon(pothole.confidence)}
+        >
+          <Popup>
+            <div className="text-sm">
+              <div className="font-bold">⚠️ Pothole</div>
+              <div>DON: {pothole.donValue.toFixed(2)}</div>
+              <div>Confidence: {(pothole.confidence * 100).toFixed(0)}%</div>
+              <div>Last: {new Date(pothole.lastUpdated).toLocaleDateString()}</div>
+              {isAdmin && (
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => handleSimulateCleanPass(pothole.geohash)}
+                    className="px-2 py-1 bg-yellow-500 text-white text-xs rounded"
+                  >
+                    -10% (Clean Pass)
+                  </button>
+                  <button
+                    onClick={() => handleDeletePothole(pothole.geohash)}
+                    className="px-2 py-1 bg-red-500 text-white text-xs rounded"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          </Popup>
+        </Marker>
+      ))}
     </MapContainer>
+    </div>
   );
 }

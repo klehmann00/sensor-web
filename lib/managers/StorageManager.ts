@@ -124,7 +124,7 @@ class StorageManager {
     if (!this.database) throw new Error('StorageManager not initialized');
 
     try {
-      // Get session metadata
+      // Only get session metadata, not sensor data
       const sessionsRef = ref(this.database, `users/${userId}/sessions`);
       const sessionsSnapshot = await get(sessionsRef);
 
@@ -132,39 +132,25 @@ class StorageManager {
 
       const sessions: any[] = [];
 
-      // For each session, get the data counts
       for (const sessionChild of Object.entries(sessionsSnapshot.val())) {
         const [sessionId, sessionData] = sessionChild as [string, any];
 
-        // Get sensor data counts
-        const sensorDataRef = ref(this.database, `users/${userId}/sessions/${sessionId}/sensorData`);
-        const sensorSnapshot = await get(sensorDataRef);
-
-        let accelCount = 0;
-        let gyroCount = 0;
-        let magCount = 0;
-
-        if (sensorSnapshot.exists()) {
-          const sensorData = sensorSnapshot.val();
-          accelCount = sensorData.accelerometer ? Object.keys(sensorData.accelerometer).length : 0;
-          gyroCount = sensorData.gyroscope ? Object.keys(sensorData.gyroscope).length : 0;
-          magCount = sensorData.magnetometer ? Object.keys(sensorData.magnetometer).length : 0;
-        }
+        const metadata = sessionData.metadata || {};
 
         sessions.push({
           id: sessionId,
           startTime: sessionData.startTime,
           endTime: sessionData.endTime,
           status: sessionData.status,
-          dataPoints: accelCount + gyroCount + magCount,
-          accelerometerPoints: accelCount,
-          gyroscopePoints: gyroCount,
-          magnetometerPoints: magCount,
-          vehicleId: sessionData.metadata?.vehicleId || null,
+          recording: sessionData.recording,
+          vehicleId: metadata.vehicleId || null,
+          dataPoints: metadata.dataPoints ?? -1,
+          accelerometerPoints: metadata.accelerometerPoints ?? -1,
+          gyroscopePoints: metadata.gyroscopePoints ?? -1,
+          magnetometerPoints: metadata.magnetometerPoints ?? -1,
         });
       }
 
-      // Sort by start time, most recent first
       return sessions.sort((a, b) => b.startTime - a.startTime);
     } catch (error) {
       console.error('Error getting user sessions:', error);
@@ -213,6 +199,7 @@ class StorageManager {
         startTime: sessionData.startTime,
         endTime: sessionData.endTime,
         status: sessionData.status,
+        metadata: sessionData.metadata || {},
         accelerometerData: toArray(sensorData.accelerometer),
         gyroscopeData: toArray(sensorData.gyroscope),
         magnetometerData: toArray(sensorData.magnetometer),

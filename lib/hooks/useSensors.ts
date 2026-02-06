@@ -32,11 +32,14 @@ export const useSensors = () => {
     speed: null
   });
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [gyroAvailable, setGyroAvailable] = useState<boolean | null>(null); // null = not checked yet
 
   // Store cleanup functions to prevent memory leaks
   const motionCleanupRef = useRef<(() => void) | null>(null);
   const orientationCleanupRef = useRef<(() => void) | null>(null);
   const gpsWatchIdRef = useRef<number | null>(null);
+  const gyroSampleCountRef = useRef<number>(0);
+  const gyroCheckedRef = useRef<boolean>(false);
 
   const requestPermission = useCallback(async () => {
     if (typeof window === 'undefined') return false;
@@ -88,6 +91,11 @@ export const useSensors = () => {
       if (!granted) return false;
     }
 
+    // Reset gyro checking state
+    gyroSampleCountRef.current = 0;
+    gyroCheckedRef.current = false;
+    setGyroAvailable(null);
+
     // Handle device motion (accelerometer + gyroscope)
     const handleMotion = (event: DeviceMotionEvent) => {
       const accel = event.accelerationIncludingGravity;
@@ -103,6 +111,23 @@ export const useSensors = () => {
         const gyroData = gyro
           ? { x: gyro.alpha || 0, y: gyro.beta || 0, z: gyro.gamma || 0 }
           : { x: 0, y: 0, z: 0 };
+
+        // After ~2 seconds (120 samples at 60Hz), check if gyro is working
+        gyroSampleCountRef.current++;
+        if (!gyroCheckedRef.current && gyroSampleCountRef.current >= 120) {
+          gyroCheckedRef.current = true;
+          const hasGyro = gyro && (
+            Math.abs(gyro.alpha || 0) > 0.001 ||
+            Math.abs(gyro.beta || 0) > 0.001 ||
+            Math.abs(gyro.gamma || 0) > 0.001
+          );
+          setGyroAvailable(hasGyro);
+          if (!hasGyro) {
+            console.warn('Gyroscope not available or returning zeros');
+          } else {
+            console.log('Gyroscope confirmed working');
+          }
+        }
 
         const processedAccel = SensorProcessor.processAccelerometerData(accelData);
         const processedGyro = SensorProcessor.processGyroscopeData(gyroData);
@@ -279,6 +304,7 @@ export const useSensors = () => {
     startSensors,
     stopSensors,
     requestPermission,
-    permissionGranted
+    permissionGranted,
+    gyroAvailable
   };
 };

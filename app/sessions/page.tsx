@@ -78,11 +78,14 @@ export default function SessionsPage() {
     }
   }, [user]);
 
-  const getVehicleName = (vehicleId?: string) => {
-    if (!vehicleId) return 'Unknown';
+  const getVehicleDisplay = (vehicleId?: string) => {
+    if (!vehicleId) return { type: 'Unknown', nickname: null };
     const vehicle = vehicles.find(v => v.id === vehicleId);
-    if (!vehicle) return 'Unknown';
-    return vehicle.nickname || `${vehicle.year} ${vehicle.make} ${vehicle.model}`;
+    if (!vehicle) return { type: 'Unknown', nickname: null };
+    return {
+      type: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
+      nickname: vehicle.nickname || null
+    };
   };
 
   const formatDate = (timestamp: number) => {
@@ -209,7 +212,15 @@ export default function SessionsPage() {
                         {session.id}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {getVehicleName((session as any).vehicleId)}
+                        {(() => {
+                          const v = getVehicleDisplay((session as any).vehicleId);
+                          return (
+                            <div>
+                              <div>{v.type}</div>
+                              {v.nickname && <div className="text-xs text-gray-400">{v.nickname}</div>}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {formatDate(session.startTime)}
@@ -230,9 +241,9 @@ export default function SessionsPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <div>
-                          <div className="font-semibold">{session.dataPoints.toLocaleString()} total</div>
+                          <div className="font-semibold">{session.dataPoints >= 0 ? session.dataPoints.toLocaleString() : '—'} total</div>
                           <div className="text-xs text-gray-400">
-                            A: {session.accelerometerPoints} | G: {session.gyroscopePoints} | M: {session.magnetometerPoints}
+                            A: {session.accelerometerPoints >= 0 ? session.accelerometerPoints : '—'} | G: {session.gyroscopePoints >= 0 ? session.gyroscopePoints : '—'} | M: {session.magnetometerPoints >= 0 ? session.magnetometerPoints : '—'}
                           </div>
                         </div>
                       </td>

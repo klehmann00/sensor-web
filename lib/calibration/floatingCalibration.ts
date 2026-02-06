@@ -4,6 +4,14 @@
 import ngeohash from 'ngeohash';
 import { Vector3D, GPSData, CalibrationResult, RoadDANSegment } from './types';
 
+// DAN filtering thresholds
+const MIN_SPEED_FOR_DAN = 20; // mph - ignore DAN below this speed
+const MAX_ACCELERATION_FOR_DAN = 2.0; // mph/s - ignore during hard accel/braking
+
+// Pothole detection thresholds
+const POTHOLE_DON_THRESHOLD = 13.0; // Lucky 13 - significant impact only
+const POTHOLE_COOLDOWN = 60; // Minimum samples between pothole detections (1 second)
+
 // Helper function for GPS interpolation
 function interpolateGPSData(gpsData: GPSData[], targetLength: number): GPSData[] {
   if (gpsData.length === 0) {
@@ -102,6 +110,10 @@ export function applyFloatingCalibration(
     roadDANSegments: [],
     donX: [],
     roadDON: [],
+    validForDAN: [],
+    speedMph: [],
+    accelerationMphPerSec: [],
+    potholes: [],
   };
 
   // State variables
@@ -249,6 +261,24 @@ export function applyFloatingCalibration(
     const gpsFiltered = interpolatedGPSFiltered[i];
     result.gpsSpeedSmoothed.push(gpsSmoothed.mps);
     result.gpsSpeedFiltered.push(gpsFiltered.mps);
+
+    // Get current speed in mph (from GPS data) for DAN validity check
+    const currentSpeedMph = gps ? (gps.mph ?? 0) : 0;
+    result.speedMph.push(currentSpeedMph);
+
+    // Calculate acceleration (change in speed per second)
+    let speedAcceleration = 0;
+    if (i > 0 && gps && interpolatedGPS[i - 1]) {
+      const timeDeltaSec = ((gps.timestamp || 0) - (interpolatedGPS[i - 1].timestamp || 0)) / 1000;
+      if (timeDeltaSec > 0) {
+        speedAcceleration = Math.abs(((gps.mph || 0) - (interpolatedGPS[i - 1].mph || 0)) / timeDeltaSec);
+      }
+    }
+    result.accelerationMphPerSec.push(speedAcceleration);
+
+    // Flag whether this datapoint is valid for DAN (speed-based only)
+    const validForDAN = currentSpeedMph >= MIN_SPEED_FOR_DAN;
+    result.validForDAN.push(validForDAN);
 
     // === STEP 0: FILTER RAW ACCEL (for clean gravity estimation using alpha) ===
     accelFilteredX = alpha * accelFilteredX + (1 - alpha) * accel.x;
@@ -632,26 +662,37 @@ export function applyFloatingCalibration(
 
     // RoadDAN - 1-second average of DAN aligned with GPS updates (60 samples)
     // This is the segment-level measurement for road roughness mapping
+    // Only include valid points (speed >= MIN_SPEED_FOR_DAN)
     if (i === 0) {
-      (result as any)._danAccumulator = result.danX[0];
-      (result as any)._danSampleCount = 1;
-      result.roadDAN.push(result.danX[0]);
+      (result as any)._danAccumulator = validForDAN ? result.danX[0] : 0;
+      (result as any)._danSampleCount = validForDAN ? 1 : 0;
+      (result as any)._danTotalCount = 1;
+      result.roadDAN.push(validForDAN ? result.danX[0] : 0);
     } else if (i % 60 === 0) {
-      const avgDAN = (result as any)._danAccumulator / (result as any)._danSampleCount;
-      result.roadDAN.push(avgDAN);
-      // Create a geolocated RoadDAN segment
-      const gps = interpolatedGPS[i];
-      if (gps.lat !== 0 && gps.lng !== 0) {
+      // Calculate average from valid samples only
+      const avgDAN = (result as any)._danSampleCount > 0
+        ? (result as any)._danAccumulator / (result as any)._danSampleCount
+        : -1; // -1 indicates no valid samples in this window
+      result.roadDAN.push(avgDAN >= 0 ? avgDAN : 0);
+
+      // Check if >50% of points in window are valid
+      const validRatio = (result as any)._danTotalCount > 0
+        ? (result as any)._danSampleCount / (result as any)._danTotalCount
+        : 0;
+
+      // Create a geolocated RoadDAN segment only if >50% of samples are valid
+      const gpsPoint = interpolatedGPS[i];
+      if (gpsPoint.lat !== 0 && gpsPoint.lng !== 0 && avgDAN >= 0 && validRatio >= 0.5) {
         const segment: RoadDANSegment = {
-          geohash8: ngeohash.encode(gps.lat, gps.lng, 8),
-          lat: gps.lat,
-          lng: gps.lng,
+          geohash8: ngeohash.encode(gpsPoint.lat, gpsPoint.lng, 8),
+          lat: gpsPoint.lat,
+          lng: gpsPoint.lng,
           roadDAN: avgDAN,
-          timestamp: gps.timestamp,
-          speedMph: gps.mph,
+          timestamp: gpsPoint.timestamp,
+          speedMph: gpsPoint.mph,
         };
         result.roadDANSegments.push(segment);
-        console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gps.mph.toFixed(1), 'mph');
+        console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gpsPoint.mph.toFixed(1), 'mph', 'validRatio:', (validRatio * 100).toFixed(0) + '%');
 
         // Detect geographic jumps
         if (result.roadDANSegments.length >= 2) {
@@ -663,13 +704,21 @@ export function applyFloatingCalibration(
             console.log('GPS JUMP:', dist.toFixed(0), 'm between segments', prev.geohash8, '->', segment.geohash8, 'lat:', prev.lat, '->', segment.lat, 'lng:', prev.lng, '->', segment.lng);
           }
         }
+      } else if (validRatio < 0.5) {
+        console.log('Skipping RoadDAN segment - only', (validRatio * 100).toFixed(0) + '% valid samples (need >50%)');
+      } else if (avgDAN < 0) {
+        console.log('Skipping RoadDAN segment - no valid samples');
       }
       (result as any)._danAccumulator = 0;
       (result as any)._danSampleCount = 0;
+      (result as any)._danTotalCount = 0;
     } else {
-      // Accumulate and repeat last value
-      (result as any)._danAccumulator += result.danX[i];
-      (result as any)._danSampleCount += 1;
+      // Accumulate only valid points and repeat last value
+      (result as any)._danTotalCount += 1;
+      if (validForDAN) {
+        (result as any)._danAccumulator += result.danX[i];
+        (result as any)._danSampleCount += 1;
+      }
       result.roadDAN.push(result.roadDAN[result.roadDAN.length - 1]);
     }
 
@@ -703,6 +752,28 @@ export function applyFloatingCalibration(
       (result as any)._donAccumulator += result.donX[i];
       (result as any)._donSampleCount += 1;
       result.roadDON.push(result.roadDON[result.roadDON.length - 1]);
+    }
+
+    // Pothole detection - simple threshold
+    if (result.donX[i] > POTHOLE_DON_THRESHOLD && result.validForDAN[i]) {
+      const lastPotholeIndex = result.potholes.length > 0 ? result.potholes[result.potholes.length - 1].index : -POTHOLE_COOLDOWN;
+
+      if (i - lastPotholeIndex >= POTHOLE_COOLDOWN) {
+        const potholeGPS = interpolatedGPS[i];
+
+        if (potholeGPS && potholeGPS.lat !== 0 && potholeGPS.lng !== 0) {
+          result.potholes.push({
+            index: i,
+            timestamp: accel.timestamp || Date.now(),
+            lat: potholeGPS.lat,
+            lng: potholeGPS.lng,
+            donValue: result.donX[i],
+            danValue: result.danX[i] || 0,
+            speedMph: potholeGPS.mph || 0
+          });
+          console.log('Pothole detected at index', i, 'DON:', result.donX[i].toFixed(2));
+        }
+      }
     }
 
     result.gravityHistory.push({ ...gravity, timestamp: accel.timestamp });
