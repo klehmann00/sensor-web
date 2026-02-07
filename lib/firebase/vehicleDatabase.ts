@@ -12,6 +12,9 @@ export interface Vehicle {
   nickname?: string;
   isDefault: boolean;
   createdAt: number;
+  experienceMinDAN?: number;
+  experienceMaxDAN?: number;
+  experienceTotalSegments?: number;
 }
 
 // Fetch all vehicles for a user
@@ -123,4 +126,45 @@ export async function setDefaultVehicle(userId: string, vehicleId: string): Prom
 export async function getDefaultVehicle(userId: string): Promise<Vehicle | null> {
   const vehicles = await getUserVehicles(userId);
   return vehicles.find(v => v.isDefault) || null;
+}
+
+// Update vehicle experience (min/max DAN bounds)
+export async function updateVehicleExperience(
+  userId: string,
+  vehicleId: string,
+  sessionMinDAN: number,
+  sessionMaxDAN: number,
+  segmentCount: number
+): Promise<void> {
+  if (!database) return;
+
+  const vehicleRef = ref(database, `users/${userId}/vehicles/${vehicleId}`);
+  const snapshot = await get(vehicleRef);
+
+  if (!snapshot.exists()) return;
+
+  const vehicle = snapshot.val() as Vehicle;
+
+  // Experience bounds can only EXPAND, never contract
+  const newMinDAN = vehicle.experienceMinDAN !== undefined
+    ? Math.min(vehicle.experienceMinDAN, sessionMinDAN)
+    : sessionMinDAN;
+
+  const newMaxDAN = vehicle.experienceMaxDAN !== undefined
+    ? Math.max(vehicle.experienceMaxDAN, sessionMaxDAN)
+    : sessionMaxDAN;
+
+  const newTotalSegments = (vehicle.experienceTotalSegments || 0) + segmentCount;
+
+  await update(vehicleRef, {
+    experienceMinDAN: newMinDAN,
+    experienceMaxDAN: newMaxDAN,
+    experienceTotalSegments: newTotalSegments
+  });
+
+  console.log('Vehicle experience updated:', {
+    minDAN: newMinDAN.toFixed(2),
+    maxDAN: newMaxDAN.toFixed(2),
+    totalSegments: newTotalSegments
+  });
 }

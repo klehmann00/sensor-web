@@ -99,6 +99,9 @@ export interface CalibrationResult {
   speedMph: number[];
   accelerationMphPerSec: number[];
   potholes: PotholeDetection[];
+  experienceRollingDAN: number[];
+  experiencedMinDAN: number[];
+  experiencedMaxDAN: number[];
 }
 
 export interface PotholeDetection {
@@ -118,6 +121,7 @@ export interface SignalControl {
   width?: number;
   yAxisID?: string;
   label?: string;
+  dashed?: boolean;
 }
 
 export type SignalControls = Record<string, SignalControl>;

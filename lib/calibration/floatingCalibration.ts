@@ -56,7 +56,9 @@ export function applyFloatingCalibration(
   observerAlpha: number = 0.05,
   filterAlpha: number = 0.05,
   gpsSpeedAlpha: number = 0.95,
-  danDecay: number = 0.95
+  danDecay: number = 0.95,
+  initialMinDAN: number = 2.0,
+  initialMaxDAN: number = 2.0
 ): CalibrationResult {
   const result: CalibrationResult = {
     transformed: [],
@@ -114,6 +116,9 @@ export function applyFloatingCalibration(
     speedMph: [],
     accelerationMphPerSec: [],
     potholes: [],
+    experienceRollingDAN: [],
+    experiencedMinDAN: [],
+    experiencedMaxDAN: [],
   };
 
   // State variables
@@ -660,29 +665,19 @@ export function applyFloatingCalibration(
       result.danX.push(Math.sqrt(smoothedSquare));
     }
 
-    // RoadDAN - 1-second average of DAN aligned with GPS updates (60 samples)
-    // This is the segment-level measurement for road roughness mapping
-    // Only include valid points (speed >= MIN_SPEED_FOR_DAN)
+    // RoadDAN - 1-second average of DAN for display and upload
     if (i === 0) {
-      (result as any)._danAccumulator = validForDAN ? result.danX[0] : 0;
-      (result as any)._danSampleCount = validForDAN ? 1 : 0;
-      (result as any)._danTotalCount = 1;
-      result.roadDAN.push(validForDAN ? result.danX[0] : 0);
+      (result as any)._danAccumulator = result.danX[0];
+      (result as any)._danCount = 1;
+      result.roadDAN.push(result.danX[0]);
     } else if (i % 60 === 0) {
-      // Calculate average from valid samples only
-      const avgDAN = (result as any)._danSampleCount > 0
-        ? (result as any)._danAccumulator / (result as any)._danSampleCount
-        : -1; // -1 indicates no valid samples in this window
-      result.roadDAN.push(avgDAN >= 0 ? avgDAN : 0);
+      // Calculate 1-second average
+      const avgDAN = (result as any)._danAccumulator / (result as any)._danCount;
+      result.roadDAN.push(avgDAN);
 
-      // Check if >50% of points in window are valid
-      const validRatio = (result as any)._danTotalCount > 0
-        ? (result as any)._danSampleCount / (result as any)._danTotalCount
-        : 0;
-
-      // Create a geolocated RoadDAN segment only if >50% of samples are valid
+      // Create roadDANSegment for upload only if speed >= 20mph
       const gpsPoint = interpolatedGPS[i];
-      if (gpsPoint.lat !== 0 && gpsPoint.lng !== 0 && avgDAN >= 0 && validRatio >= 0.5) {
+      if (gpsPoint.lat !== 0 && gpsPoint.lng !== 0 && gpsPoint.mph >= MIN_SPEED_FOR_DAN) {
         const segment: RoadDANSegment = {
           geohash8: ngeohash.encode(gpsPoint.lat, gpsPoint.lng, 8),
           lat: gpsPoint.lat,
@@ -692,33 +687,16 @@ export function applyFloatingCalibration(
           speedMph: gpsPoint.mph,
         };
         result.roadDANSegments.push(segment);
-        console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gpsPoint.mph.toFixed(1), 'mph', 'validRatio:', (validRatio * 100).toFixed(0) + '%');
+        console.log('RoadDAN segment:', segment.geohash8, 'DAN:', avgDAN.toFixed(3), 'speed:', gpsPoint.mph.toFixed(1), 'mph');
+      }
 
-        // Detect geographic jumps
-        if (result.roadDANSegments.length >= 2) {
-          const prev = result.roadDANSegments[result.roadDANSegments.length - 2];
-          const dlat = segment.lat - prev.lat;
-          const dlng = segment.lng - prev.lng;
-          const dist = Math.sqrt(dlat * dlat + dlng * dlng) * 111000; // rough meters
-          if (dist > 200) {
-            console.log('GPS JUMP:', dist.toFixed(0), 'm between segments', prev.geohash8, '->', segment.geohash8, 'lat:', prev.lat, '->', segment.lat, 'lng:', prev.lng, '->', segment.lng);
-          }
-        }
-      } else if (validRatio < 0.5) {
-        console.log('Skipping RoadDAN segment - only', (validRatio * 100).toFixed(0) + '% valid samples (need >50%)');
-      } else if (avgDAN < 0) {
-        console.log('Skipping RoadDAN segment - no valid samples');
-      }
+      // Reset accumulator for next second
       (result as any)._danAccumulator = 0;
-      (result as any)._danSampleCount = 0;
-      (result as any)._danTotalCount = 0;
+      (result as any)._danCount = 0;
     } else {
-      // Accumulate only valid points and repeat last value
-      (result as any)._danTotalCount += 1;
-      if (validForDAN) {
-        (result as any)._danAccumulator += result.danX[i];
-        (result as any)._danSampleCount += 1;
-      }
+      // Accumulate and repeat last value for display
+      (result as any)._danAccumulator += result.danX[i];
+      (result as any)._danCount += 1;
       result.roadDAN.push(result.roadDAN[result.roadDAN.length - 1]);
     }
 
@@ -835,6 +813,66 @@ export function applyFloatingCalibration(
     console.log('  accelY_gyro:', result.accelY_fromGyro.slice(2800, 2810).map(v => v.toFixed(2)));
     console.log('  accelY_mag:', result.accelY_fromMag.slice(2800, 2810).map(v => v.toFixed(2)));
   }
+
+  // 3-second rolling average of roadDAN (simple moving average filter)
+  // Also track evolving min/max experience bounds
+  const WINDOW = 180; // 3 seconds at 60Hz
+  const INIT_DAN = 2.0;  // Initialize to middle value to avoid startup ramp
+  const MIN_CONFIDENCE = 0.9;  // Only update experience when confidence > 90% (both gravity and forward stable)
+  let sum = INIT_DAN * WINDOW;  // Pre-fill sum so average starts at INIT_DAN, not 0
+  let currentMin = initialMinDAN;
+  let currentMax = initialMaxDAN;
+
+  let confidenceWasHigh = false;
+
+  for (let i = 0; i < result.roadDAN.length; i++) {
+    const confidenceIsHigh = i >= WINDOW && result.confidence[i] >= MIN_CONFIDENCE;
+
+    // Only accumulate when confidence is high
+    if (confidenceIsHigh) {
+      // Reset sum when confidence first goes high
+      if (!confidenceWasHigh) {
+        sum = 0;
+        for (let j = Math.max(0, i - WINDOW + 1); j <= i; j++) {
+          sum += result.roadDAN[j];
+        }
+        confidenceWasHigh = true;
+      } else {
+        sum += result.roadDAN[i];
+        if (i >= WINDOW) {
+          sum -= result.roadDAN[i - WINDOW];
+        }
+      }
+    }
+
+    // Hold at midpoint until confidence is high
+    let rollingAvg: number;
+    if (!confidenceIsHigh) {
+      rollingAvg = (currentMin + currentMax) / 2;
+    } else {
+      rollingAvg = sum / WINDOW;
+    }
+    result.experienceRollingDAN.push(rollingAvg);
+
+    // Update min/max only when confidence is high (transformation stable)
+    if (i >= WINDOW && result.confidence[i] >= MIN_CONFIDENCE) {
+      if (rollingAvg < currentMin) {
+        currentMin = rollingAvg;
+      }
+      if (rollingAvg > currentMax) {
+        currentMax = rollingAvg;
+      }
+    }
+
+    // Push current min/max values (so they evolve over time)
+    result.experiencedMinDAN.push(currentMin);
+    result.experiencedMaxDAN.push(currentMax);
+  }
+
+  console.log('Vehicle experience:', {
+    minDAN: currentMin.toFixed(2),
+    maxDAN: currentMax.toFixed(2)
+  });
 
   return result;
 }

@@ -41,7 +41,7 @@ import {
 } from '@/lib/calibration/histogram';
 import { uploadSessionRoads, getUploadedSessions, markSessionUploaded } from '@/lib/firebase/roadDatabase';
 import { uploadSessionPotholes } from '@/lib/firebase/potholeDatabase';
-import { Vehicle, getUserVehicles } from '@/lib/firebase/vehicleDatabase';
+import { Vehicle, getUserVehicles, updateVehicleExperience } from '@/lib/firebase/vehicleDatabase';
 import dynamic from 'next/dynamic';
 
 const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
@@ -339,6 +339,11 @@ export default function CalibrationAnalysisPage() {
   const calibrationResult = useMemo(() => {
     if (!session) return null;
     try {
+      // Use vehicle's stored experience bounds, or defaults
+      const initialMinDAN = vehicle?.experienceMinDAN ?? 2.0;
+      const initialMaxDAN = vehicle?.experienceMaxDAN ?? 2.0;
+      console.log('Calibrating with initial experience:', { initialMinDAN, initialMaxDAN });
+
       return applyFloatingCalibration(
         session.accelerometerData,
         session.gyroscopeData,
@@ -348,13 +353,15 @@ export default function CalibrationAnalysisPage() {
         observerAlpha,
         filterAlpha,
         orientationFilterAlpha,
-        danDecay
+        danDecay,
+        initialMinDAN,
+        initialMaxDAN
       );
     } catch (error) {
       console.error('Calibration failed:', error);
       return null;
     }
-  }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay]);
+  }, [session, alpha, observerAlpha, filterAlpha, orientationFilterAlpha, danDecay, vehicle]);
 
   // Debug: Log GPS coordinate stats
   useEffect(() => {
@@ -391,6 +398,44 @@ export default function CalibrationAnalysisPage() {
 
     uploadPotholes();
   }, [user, sessionId, calibrationResult, session?.metadata?.vehicleId, potholesUploaded]);
+
+  // Update vehicle experience after calibration
+  const [experienceUpdated, setExperienceUpdated] = useState(false);
+  useEffect(() => {
+    console.log('Experience useEffect check:', {
+      hasUser: !!user,
+      hasCalibrationResult: !!calibrationResult,
+      experienceUpdated,
+      vehicleId: session?.metadata?.vehicleId
+    });
+    if (!user || !calibrationResult || experienceUpdated) return;
+    if (!session?.metadata?.vehicleId) return;
+
+    // Only update if we have valid experience data
+    const finalMin = calibrationResult.experiencedMinDAN[calibrationResult.experiencedMinDAN.length - 1];
+    const finalMax = calibrationResult.experiencedMaxDAN[calibrationResult.experiencedMaxDAN.length - 1];
+    const segmentCount = calibrationResult.roadDANSegments.length;
+
+    if (finalMin === undefined || finalMax === undefined || segmentCount === 0) return;
+
+    const saveExperience = async () => {
+      console.log('Saving vehicle experience:', { minDAN: finalMin.toFixed(2), maxDAN: finalMax.toFixed(2), segments: segmentCount });
+      try {
+        await updateVehicleExperience(
+          user.uid,
+          session.metadata!.vehicleId!,
+          finalMin,
+          finalMax,
+          segmentCount
+        );
+        setExperienceUpdated(true);
+      } catch (e) {
+        console.error('Failed to save vehicle experience:', e);
+      }
+    };
+
+    saveExperience();
+  }, [user, calibrationResult, session?.metadata?.vehicleId, experienceUpdated]);
 
   // Build histogram from current recording's RoadDAN segments
   const sessionHistogram = useMemo(() => {
@@ -1199,7 +1244,7 @@ export default function CalibrationAnalysisPage() {
         borderWidth: control.width || 1,
         pointRadius: 0,
         yAxisID: control.yAxisID || 'y',
-        ...(key === 'grid' ? { borderDash: [6, 4] } : {})
+        ...(key === 'grid' || control.dashed ? { borderDash: [6, 4] } : {})
       });
     };
 
@@ -1295,6 +1340,9 @@ export default function CalibrationAnalysisPage() {
     addDataset('zPrimeFiltered', calibrationResult.zPrimeFiltered, signalControls.zPrimeFiltered);
     addDataset('danX', calibrationResult.danX, signalControls.danX);
     addDataset('roadDAN', calibrationResult.roadDAN, signalControls.roadDAN);
+    addDataset('experienceRollingDAN', calibrationResult.experienceRollingDAN, signalControls.experienceRollingDAN);
+    addDataset('experiencedMinDAN', calibrationResult.experiencedMinDAN, signalControls.experiencedMinDAN);
+    addDataset('experiencedMaxDAN', calibrationResult.experiencedMaxDAN, signalControls.experiencedMaxDAN);
 
     // Add colored DAN signal (uses segment coloring)
     if (calibrationResult.roadDAN.length > 0 && signalControls.danColored?.visible) {
