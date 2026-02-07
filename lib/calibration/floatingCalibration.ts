@@ -657,9 +657,13 @@ export function applyFloatingCalibration(
     const devZ = accel.z - accelFilteredZ;
     const deviationMagnitude = Math.sqrt(devX * devX + devY * devY + devZ * devZ);
     const deviationSquared = deviationMagnitude * deviationMagnitude;
-    if (i === 0) {
-      // Initialize DAN at midpoint of expected range to avoid artificial startup spike
-      const initialDAN = (initialMinDAN + initialMaxDAN) / 2;
+    const initialDAN = (initialMinDAN + initialMaxDAN) / 2;
+
+    // Hold DAN at midpoint until confidence is high (transformation valid)
+    if (result.confidence[i] < 0.9) {
+      result.danX.push(initialDAN);
+    } else if (i === 0 || result.confidence[i - 1] < 0.9) {
+      // First high-confidence sample - start fresh at midpoint
       result.danX.push(initialDAN);
     } else {
       const prevDAN = result.danX[i - 1];
