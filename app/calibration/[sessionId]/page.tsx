@@ -41,7 +41,7 @@ import {
 } from '@/lib/calibration/histogram';
 import { uploadSessionRoads, getUploadedSessions, markSessionUploaded } from '@/lib/firebase/roadDatabase';
 import { uploadSessionPotholes } from '@/lib/firebase/potholeDatabase';
-import { Vehicle, getUserVehicles, updateVehicleExperience } from '@/lib/firebase/vehicleDatabase';
+import { Vehicle, getUserVehicles, updateVehicleExperience, resetVehicleExperience } from '@/lib/firebase/vehicleDatabase';
 import dynamic from 'next/dynamic';
 
 const RoadDANMap = dynamic(() => import('./RoadDANMap'), {
@@ -1999,6 +1999,25 @@ export default function CalibrationAnalysisPage() {
                   </div>
                   {vehicle?.nickname && (
                     <div className="text-xs text-gray-500">{vehicle.nickname}</div>
+                  )}
+                  {vehicle && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      Experience: {vehicle.experienceMinDAN?.toFixed(2) ?? '?'} - {vehicle.experienceMaxDAN?.toFixed(2) ?? '?'}
+                      {' '}({vehicle.experienceTotalSegments ?? 0} segments)
+                      {isAdmin && (
+                        <button
+                          onClick={async () => {
+                            if (user && vehicle && window.confirm('Reset vehicle experience?')) {
+                              await resetVehicleExperience(user.uid, vehicle.id);
+                              window.location.reload();
+                            }
+                          }}
+                          className="ml-2 text-red-500 hover:text-red-700"
+                        >
+                          [Reset]
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div>

@@ -658,7 +658,9 @@ export function applyFloatingCalibration(
     const deviationMagnitude = Math.sqrt(devX * devX + devY * devY + devZ * devZ);
     const deviationSquared = deviationMagnitude * deviationMagnitude;
     if (i === 0) {
-      result.danX.push(Math.sqrt(deviationSquared));
+      // Initialize DAN at midpoint of expected range to avoid artificial startup spike
+      const initialDAN = (initialMinDAN + initialMaxDAN) / 2;
+      result.danX.push(initialDAN);
     } else {
       const prevDAN = result.danX[i - 1];
       const smoothedSquare = danDecay * (prevDAN * prevDAN) + (1 - danDecay) * deviationSquared;

@@ -168,3 +168,20 @@ export async function updateVehicleExperience(
     totalSegments: newTotalSegments
   });
 }
+
+// Reset vehicle experience (for testing/debugging)
+export async function resetVehicleExperience(
+  userId: string,
+  vehicleId: string
+): Promise<void> {
+  if (!database) return;
+
+  const vehicleRef = ref(database, `users/${userId}/vehicles/${vehicleId}`);
+  await update(vehicleRef, {
+    experienceMinDAN: null,
+    experienceMaxDAN: null,
+    experienceTotalSegments: null
+  });
+
+  console.log('Vehicle experience reset for:', vehicleId);
+}
